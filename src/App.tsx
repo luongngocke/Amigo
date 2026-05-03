@@ -25,18 +25,63 @@ import {
   UserCheck,
   Edit,
   Trash2,
-  LayoutGrid
+  LayoutGrid,
+  Lock,
+  User,
+  ShieldCheck,
+  RefreshCw,
+  ShoppingCart,
+  FileText,
+  Package,
+  RotateCcw,
+  Wallet,
+  Box,
+  Database,
+  CheckSquare,
+  ArrowDownCircle,
+  ChevronDown,
+  UserRoundPen,
+  Menu,
+  UserCog,
+  Receipt
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Room, RoomStatus, Booking, Guest, DashboardStats, BookingStatus, RoomType, UserRole } from './types';
+import { Room, RoomStatus, Booking, Guest, DashboardStats, BookingStatus, RoomType, UserRole, Transaction, TransactionType, RoomService } from './types';
 import { MOCK_ROOMS, MOCK_BOOKINGS, MOCK_GUESTS } from './mockData';
 
-type Tab = 'dashboard' | 'rooms' | 'bookings' | 'guests' | 'settings' | 'roomManagement';
+type Tab = 'dashboard' | 'rooms' | 'bookings' | 'guests' | 'settings' | 'roomManagement' | 'ledger';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [currentUser, setCurrentUser] = useState<UserRole>(UserRole.ADMIN);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [rooms, setRooms] = useState<Room[]>(MOCK_ROOMS);
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [loginError, setLoginError] = useState('');
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Login logic
+    if ((loginForm.username === 'admin' && loginForm.password === 'admin') || 
+        (loginForm.username === 'peajastr' && loginForm.password === 'nhiethuyet')) {
+      setCurrentUser(UserRole.ADMIN);
+      setIsAuthenticated(true);
+      setActiveTab('dashboard');
+      setLoginError('');
+    } else if (loginForm.username === 'staff' && loginForm.password === 'staff') {
+      setCurrentUser(UserRole.STAFF);
+      setIsAuthenticated(true);
+      setActiveTab('rooms');
+      setLoginError('');
+    } else {
+      setLoginError('Tên đăng nhập hoặc mật khẩu không chính xác');
+    }
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setLoginForm({ username: '', password: '' });
+  };
   const [bookings, setBookings] = useState<Booking[]>(MOCK_BOOKINGS);
   const [guests, setGuests] = useState<Guest[]>(MOCK_GUESTS);
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -61,14 +106,36 @@ export default function App() {
     floor: 1,
     status: RoomStatus.AVAILABLE
   });
-  const [stats, setStats] = useState<DashboardStats>({
-    totalRooms: MOCK_ROOMS.length,
-    occupiedRooms: MOCK_ROOMS.filter(r => r.status === RoomStatus.OCCUPIED).length,
-    expectedArrivals: 3,
-    expectedDepartures: 1,
-    dailyRevenue: 4550000,
-    monthlyRevenue: 125400000
+  const [apiUrl, setApiUrl] = useState<string>(localStorage.getItem('hotel_api_url') || '');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [accountData, setAccountData] = useState({
+    displayName: 'Quản trị viên',
+    email: 'admin@hotel.com',
+    currentPassword: '',
+    newPassword: ''
   });
+
+  const handleSaveSettings = () => {
+    setSaveStatus('idle');
+    try {
+      localStorage.setItem('hotel_api_url', apiUrl);
+      setSaveStatus('success');
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    } catch (err) {
+      setSaveStatus('error');
+    }
+  };
+
+  const stats: DashboardStats = {
+    totalRooms: rooms.length,
+    occupiedRooms: rooms.filter(r => r.status === RoomStatus.OCCUPIED).length,
+    availableRooms: rooms.filter(r => r.status === RoomStatus.AVAILABLE).length,
+    bookedNotReceived: bookings.filter(b => b.status === BookingStatus.CONFIRMED).length,
+    expectedArrivals: bookings.filter(b => b.status === BookingStatus.CONFIRMED).length,
+    expectedDepartures: bookings.filter(b => b.status === BookingStatus.CHECKED_IN).length, // Placeholder logic
+    dailyRevenue: bookings.reduce((acc, b) => acc + (b.totalPrice || 0), 0) / 30, // Simplified mock
+    monthlyRevenue: bookings.reduce((acc, b) => acc + (b.totalPrice || 0), 0)
+  };
 
   useEffect(() => {
     if (isBookingModalOpen) {
@@ -81,6 +148,114 @@ export default function App() {
 
   const [selectedBookingDetails, setSelectedBookingDetails] = useState<Booking | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [selectedGuest, setSelectedGuest] = useState<Guest | null>(null);
+  const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
+  const [isGuestDetailModalOpen, setIsGuestDetailModalOpen] = useState(false);
+  const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+  const [availableServices] = useState([
+    { name: 'Nước suối', price: 15000 },
+    { name: 'Mì tôm', price: 20000 },
+    { name: 'Giặt là', price: 50000 },
+    { name: 'Coca Cola', price: 25000 },
+    { name: 'Bia Larue', price: 30000 },
+  ]);
+  const [editingGuest, setEditingGuest] = useState<Guest | null>(null);
+  const [newGuestData, setNewGuestData] = useState<Partial<Guest>>({
+    name: '',
+    email: '',
+    phone: '',
+    address: '',
+    identityCard: '',
+  });
+
+  const [transactions, setTransactions] = useState<Transaction[]>([
+    { id: 't1', type: TransactionType.INCOME, amount: 2500000, category: 'Phòng', description: 'Thanh toán phòng 201', date: '2024-05-01', paymentMethod: 'Tiền mặt' },
+    { id: 't2', type: TransactionType.EXPENSE, amount: 500000, category: 'Điện nước', description: 'Tiền điện tháng 4', date: '2024-05-02', paymentMethod: 'Chuyển khoản' },
+    { id: 't3', type: TransactionType.INCOME, amount: 1200000, category: 'Dịch vụ', description: 'Giặt là & Ăn sáng p305', date: '2024-05-03', paymentMethod: 'Thẻ' },
+  ]);
+  const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [newTransactionData, setNewTransactionData] = useState<Partial<Transaction>>({
+    type: TransactionType.INCOME,
+    amount: 0,
+    category: 'Phòng',
+    description: '',
+    date: new Date().toISOString().split('T')[0],
+    paymentMethod: 'Tiền mặt'
+  });
+
+  const openGuestModal = (guest?: Guest) => {
+    if (guest) {
+      setEditingGuest(guest);
+      setNewGuestData(guest);
+    } else {
+      setEditingGuest(null);
+      setNewGuestData({
+        name: '',
+        email: '',
+        phone: '',
+        address: '',
+        identityCard: '',
+      });
+    }
+    setIsGuestModalOpen(true);
+  };
+
+  const handleGuestAction = () => {
+    if (!newGuestData.name || !newGuestData.phone) {
+      alert('Vui lòng nhập tên và số điện thoại!');
+      return;
+    }
+
+    if (editingGuest) {
+      setGuests(guests.map(g => g.id === editingGuest.id ? { ...editingGuest, ...newGuestData } as Guest : g));
+    } else {
+      const newGuest: Guest = {
+        ...newGuestData,
+        id: `g${Date.now()}`,
+        totalBookings: 0,
+        lastVisit: 'Chưa có'
+      } as Guest;
+      setGuests([newGuest, ...guests]);
+    }
+    setIsGuestModalOpen(false);
+    setEditingGuest(null);
+  };
+
+  const deleteGuest = (id: string) => {
+    if (window.confirm('Bạn có chắc chắn muốn xóa khách hàng này?')) {
+      setGuests(guests.filter(g => g.id !== id));
+      if (selectedGuest?.id === id) setIsGuestDetailModalOpen(false);
+    }
+  };
+
+  const addServiceToBooking = (serviceName: string, price: number) => {
+    if (!selectedBookingDetails) return;
+    
+    const newService: RoomService = {
+      id: `s${Date.now()}`,
+      name: serviceName,
+      price: price,
+      quantity: 1,
+      createdAt: new Date().toISOString().split('T')[0]
+    };
+
+    const updatedBookings = bookings.map(b => {
+      if (b.id === selectedBookingDetails.id) {
+        const updatedServices = [...(b.services || []), newService];
+        const updatedBooking = { 
+          ...b, 
+          services: updatedServices,
+          totalPrice: b.totalPrice + price
+        };
+        setSelectedBookingDetails(updatedBooking);
+        return updatedBooking;
+      }
+      return b;
+    });
+
+    setBookings(updatedBookings);
+  };
 
   const handleCreateBooking = () => {
     if (!guestSearch || !guestPhone || !preSelectedRoomId) {
@@ -167,6 +342,49 @@ export default function App() {
   const deleteRoom = (id: string) => {
     if (window.confirm('Bạn có chắc chắn muốn xóa phòng này?')) {
       setRooms(rooms.filter(r => r.id !== id));
+    }
+  };
+
+  const openTransactionModal = (transaction?: Transaction) => {
+    if (transaction) {
+      setEditingTransaction(transaction);
+      setNewTransactionData(transaction);
+    } else {
+      setEditingTransaction(null);
+      setNewTransactionData({
+        type: TransactionType.INCOME,
+        amount: 0,
+        category: 'Phòng',
+        description: '',
+        date: new Date().toISOString().split('T')[0],
+        paymentMethod: 'Tiền mặt'
+      });
+    }
+    setIsTransactionModalOpen(true);
+  };
+
+  const handleTransactionAction = () => {
+    if (newTransactionData.amount === undefined || newTransactionData.amount <= 0) {
+      alert('Vui lòng nhập số tiền hợp lệ!');
+      return;
+    }
+
+    if (editingTransaction) {
+      setTransactions(transactions.map(t => t.id === editingTransaction.id ? { ...editingTransaction, ...newTransactionData } as Transaction : t));
+    } else {
+      const newTransaction: Transaction = {
+        ...newTransactionData,
+        id: `t${Date.now()}`,
+      } as Transaction;
+      setTransactions([newTransaction, ...transactions]);
+    }
+    setIsTransactionModalOpen(false);
+    setEditingTransaction(null);
+  };
+
+  const deleteTransaction = (id: string) => {
+    if (window.confirm('Bạn có chắc chắn muốn xóa giao dịch này?')) {
+      setTransactions(transactions.filter(t => t.id !== id));
     }
   };
 
@@ -364,24 +582,24 @@ export default function App() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Tỉ lệ lấp đầy', value: `${(stats.occupiedRooms / stats.totalRooms * 100).toFixed(0)}%`, icon: <Bed />, color: 'text-primary' },
-          { label: 'Doanh thu ngày', value: formatCurrency(stats.dailyRevenue), icon: <TrendingUp />, color: 'text-emerald-600' },
-          { label: 'Dự kiến đến', value: stats.expectedArrivals.toString(), icon: <UserCheck />, color: 'text-amber-600' },
-          { label: 'Doanh thu tháng', value: formatCurrency(stats.monthlyRevenue), icon: <CreditCard />, color: 'text-slate-600' },
+          { label: 'Phòng trống', value: stats.availableRooms.toString(), icon: <CheckCircle2 />, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+          { label: 'Đang có khách', value: stats.occupiedRooms.toString(), icon: <Bed />, color: 'text-rose-600', bg: 'bg-rose-50' },
+          { label: 'Đặt chưa nhận', value: stats.bookedNotReceived.toString(), icon: <Clock />, color: 'text-amber-600', bg: 'bg-amber-50' },
+          { label: 'Doanh thu tháng', value: formatCurrency(stats.monthlyRevenue), icon: <TrendingUp />, color: 'text-primary', bg: 'bg-primary/5' },
         ].map((stat, i) => (
           <motion.div 
             key={i}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1 }}
-            className="stat-box flex items-start justify-between"
+            className={`p-6 rounded-[28px] border border-border-light shadow-sm flex items-start justify-between bg-white`}
           >
             <div>
-              <p className="stat-label">{stat.label}</p>
-              <h3 className="stat-value">{stat.value}</h3>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.label}</p>
+              <h3 className="text-2xl font-black text-text-main">{stat.value}</h3>
             </div>
-            <div className={`${stat.color} opacity-80`}>
-              {React.cloneElement(stat.icon as React.ReactElement, { size: 20 })}
+            <div className={`w-10 h-10 rounded-2xl ${stat.bg} ${stat.color} flex items-center justify-center shrink-0`}>
+              {React.cloneElement(stat.icon as React.ReactElement, { size: 22, className: 'stroke-[2.5]' })}
             </div>
           </motion.div>
         ))}
@@ -550,27 +768,69 @@ export default function App() {
   );
 
   const renderGuests = () => (
-    <div className="space-y-8 pb-20 lg:pb-0">
-      <header className="border-b border-border-light pb-6 -mt-2">
-        <h1 className="text-2xl font-bold text-text-main">Khách hàng</h1>
-        <p className="text-slate-500 text-sm">Danh sách khách hàng đã từng lưu trú.</p>
+    <div className="space-y-8 pb-32 lg:pb-0">
+      <header className="flex items-center justify-between border-b border-border-light pb-6 -mt-2">
+        <div>
+          <h1 className="text-2xl font-bold text-text-main uppercase tracking-tight">Quản lý khách hàng</h1>
+          <p className="text-slate-500 text-sm">Danh sách khách hàng đã từng lưu trú.</p>
+        </div>
+        <button 
+          onClick={() => openGuestModal()}
+          className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-xl text-sm font-bold shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+        >
+          <Plus size={18} /> Thêm khách hàng
+        </button>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {guests.map((guest) => (
-          <div key={guest.id} className="bg-white border border-border-light rounded-2xl p-6 flex items-center justify-between group shadow-sm hover:border-primary transition-all">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-primary font-bold text-lg">
+          <div key={guest.id} className="bg-white border border-border-light rounded-[32px] p-6 shadow-sm hover:border-primary transition-all group relative overflow-hidden">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center text-primary font-black text-2xl border border-slate-100">
                 {guest.name.charAt(0)}
               </div>
-              <div>
-                <h4 className="font-bold text-text-main">{guest.name}</h4>
-                <p className="text-xs text-slate-500">{guest.phone} • {guest.address}</p>
+              <div className="flex-1 min-w-0">
+                <h4 className="font-black text-text-main truncate text-lg leading-tight">{guest.name}</h4>
+                <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-widest">{guest.phone}</p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-sm font-bold text-text-main">{guest.totalBookings} lượt đ.</p>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">{guest.lastVisit}</p>
+
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Lượt đặt</p>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-lg font-black text-text-main">{guest.totalBookings}</span>
+                  <span className="text-[10px] font-bold text-slate-400 lowercase">lần</span>
+                </div>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Lần cuối</p>
+                <p className="text-xs font-bold text-text-main truncate">{guest.lastVisit}</p>
+              </div>
+            </div>
+            
+            <div className="flex gap-2">
+              <button 
+                onClick={() => {
+                  setSelectedGuest(guest);
+                  setIsGuestDetailModalOpen(true);
+                }}
+                className="flex-1 py-3 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95"
+              >
+                Chi tiết
+              </button>
+              <button 
+                onClick={() => openGuestModal(guest)}
+                className="p-3 bg-white text-slate-400 rounded-2xl border border-slate-200 hover:text-primary hover:border-primary transition-all active:scale-95"
+              >
+                <Edit size={16} />
+              </button>
+              <button 
+                onClick={() => deleteGuest(guest.id)}
+                className="p-3 bg-white text-slate-400 rounded-2xl border border-slate-200 hover:text-rose-500 hover:border-rose-100 transition-all active:scale-95"
+              >
+                <Trash2 size={16} />
+              </button>
             </div>
           </div>
         ))}
@@ -578,36 +838,292 @@ export default function App() {
     </div>
   );
 
-  const renderSettings = () => (
-    <div className="space-y-8 max-w-2xl pb-20 lg:pb-0">
-      <header className="border-b border-border-light pb-6 -mt-2">
-        <h1 className="text-2xl font-bold text-text-main">Cài đặt hệ thống</h1>
-        <p className="text-slate-500 text-sm">Kết nối dữ liệu và cấu hình khách sạn.</p>
-      </header>
+  const renderLedger = () => {
+    const totalIncome = transactions.filter(t => t.type === TransactionType.INCOME).reduce((acc, t) => acc + t.amount, 0);
+    const totalExpense = transactions.filter(t => t.type === TransactionType.EXPENSE).reduce((acc, t) => acc + t.amount, 0);
+    const balance = totalIncome - totalExpense;
 
-      <div className="bg-white border border-border-light rounded-2xl p-8 space-y-6 shadow-sm">
-        <div className="space-y-3">
-          <label className="stat-label">Google Apps Script API URL</label>
-          <input 
-            type="text" 
-            placeholder="Dán link script tại đây..."
-            className="w-full px-4 py-3 bg-slate-50 border border-border-light rounded-xl text-sm outline-none focus:ring-1 focus:ring-primary transition-all"
-          />
+    return (
+      <div className="space-y-8 pb-32 lg:pb-0">
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border-light pb-6 -mt-2">
+          <div>
+            <h1 className="text-2xl font-bold text-text-main uppercase tracking-tight">Sổ quỹ chi tiêu</h1>
+            <p className="text-slate-500 text-sm">Theo dõi các khoản thu và chi của khách sạn.</p>
+          </div>
+          <button 
+            onClick={() => openTransactionModal()}
+            className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-600/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+          >
+            <Plus size={18} /> Thêm thu chi
+          </button>
+        </header>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white border border-border-light rounded-[32px] p-6 shadow-sm">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Tổng thu</p>
+            <h3 className="text-2xl font-black text-emerald-600">{formatCurrency(totalIncome)}</h3>
+          </div>
+          <div className="bg-white border border-border-light rounded-[32px] p-6 shadow-sm">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Tổng chi</p>
+            <h3 className="text-2xl font-black text-rose-600">{formatCurrency(totalExpense)}</h3>
+          </div>
+          <div className="bg-slate-900 border border-slate-800 rounded-[32px] p-6 shadow-xl">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Tồn quỹ</p>
+            <h3 className="text-2xl font-black text-white">{formatCurrency(balance)}</h3>
+          </div>
         </div>
 
-        <div className="bg-slate-900 rounded-2xl p-6 text-slate-300 space-y-4">
-          <h4 className="font-bold text-white flex items-center gap-2">
-            <AlertCircle size={18} className="text-amber-400" /> Hướng dẫn kết nối Google Sheets
-          </h4>
-          <ol className="text-xs space-y-3 list-decimal pl-4 opacity-90 leading-relaxed font-medium">
-            <li>Tạo một Google Sheet với 3 tab: <b>"Phòng"</b>, <b>"Đặt phòng"</b>, <b>"Khách hàng"</b>.</li>
-            <li>Trong tab Phòng: Tiêu đề cột (Dòng 1): <code>id, số_phòng, loại, giá, trạng_thái, tầng</code></li>
-            <li>Trong tab Đặt phòng: Tiêu đề cột: <code>id, phòng_id, tên_khách, email, điện_thoại, địa_chỉ, ngày_đến, ngày_đi, trạng_thái, tổng_tiền</code></li>
-            <li>Trong tab Khách hàng: Tiêu đề cột: <code>id, tên, email, điện_thoại, địa_chỉ, cccd, tổng_lượt_đặt</code></li>
-            <li>Vào menu <b>Tiện ích mở rộng &gt; Apps Script</b> và dán mã xử lý.</li>
-            <li>Chọn <b>Triển khai &gt; Bản triển khai mới &gt; Ứng dụng web</b> (Quyền truy cập: "Bất kỳ ai").</li>
-            <li>Dán URL nhận được vào ô phía trên.</li>
-          </ol>
+        <div className="md:hidden space-y-4">
+          {transactions.map((t) => (
+            <div key={t.id} className="bg-white border border-border-light rounded-[32px] p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t.date}</span>
+                <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-tight ${
+                  t.type === TransactionType.INCOME ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+                }`}>
+                  {t.type === TransactionType.INCOME ? 'Thu' : 'Chi'}
+                </span>
+              </div>
+              
+              <div className="mb-4">
+                <h4 className="text-sm font-black text-text-main mb-1">{t.category}</h4>
+                <p className="text-xs font-medium text-slate-500 leading-relaxed">{t.description}</p>
+              </div>
+
+              <div className="flex items-center justify-between pt-4 border-t border-slate-50">
+                <div className={`text-lg font-black ${
+                  t.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-rose-600'
+                }`}>
+                  {t.type === TransactionType.INCOME ? '+' : '-'}{formatCurrency(t.amount)}
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => openTransactionModal(t)}
+                    className="p-3 text-slate-400 hover:text-primary transition-colors border border-slate-100 rounded-xl"
+                  >
+                    <Edit size={16} />
+                  </button>
+                  <button 
+                    onClick={() => deleteTransaction(t.id)}
+                    className="p-3 text-slate-400 hover:text-rose-500 transition-colors border border-slate-100 rounded-xl"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {transactions.length === 0 && (
+            <div className="bg-white border border-border-light rounded-[32px] p-12 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
+              Chưa có giao dịch nào
+            </div>
+          )}
+        </div>
+
+        <div className="hidden md:block bg-white border border-border-light rounded-[32px] overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Ngày</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Loại</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Hạng mục</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Diễn giải</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Giá trị</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {transactions.map((t) => (
+                  <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-6 py-4 text-xs font-bold text-slate-500">{t.date}</td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-tight ${
+                        t.type === TransactionType.INCOME ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+                      }`}>
+                        {t.type === TransactionType.INCOME ? 'Thu' : 'Chi'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-xs font-black text-text-main">{t.category}</td>
+                    <td className="px-6 py-4 text-xs font-medium text-slate-500">{t.description}</td>
+                    <td className={`px-6 py-4 text-sm font-black ${
+                      t.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-rose-600'
+                    }`}>
+                      {t.type === TransactionType.INCOME ? '+' : '-'}{formatCurrency(t.amount)}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => openTransactionModal(t)}
+                          className="p-2 text-slate-400 hover:text-primary transition-colors"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button 
+                          onClick={() => deleteTransaction(t.id)}
+                          className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {transactions.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-12 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
+                      Chưa có giao dịch nào
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSettings = () => (
+    <div className="bg-[#f2f4f7] min-h-screen pb-24 -mt-6 -mx-4 lg:-mx-6 lg:-mt-10 lg:pb-10">
+      {/* Header Bar */}
+      <div className="bg-white px-4 py-4 flex items-center justify-between border-b border-slate-100 mb-2 sticky top-0 z-10">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-white shadow-sm">
+            <Bed size={24} className="stroke-[2.5]" />
+          </div>
+          <h1 className="text-xl font-bold text-slate-800 tracking-tight">HotelKiot</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="p-2 text-primary hover:bg-primary/5 rounded-full transition-colors">
+            <RefreshCw size={22} className="stroke-[2.5]" />
+          </button>
+          <button className="bg-[#eaf4ff] text-primary px-4 py-1.5 rounded-full text-sm font-bold border border-primary/10">
+            Nhiều hơn
+          </button>
+        </div>
+      </div>
+
+      {/* Profile Section */}
+      <div className="bg-white px-4 py-6 mb-2 flex items-center justify-between border-b border-slate-100">
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-white text-3xl font-black shadow-lg shadow-primary/20">
+            {accountData.displayName.charAt(0)}
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">{accountData.displayName}</h2>
+            <p className="text-sm font-medium text-slate-400 capitalize">{currentUser.toLowerCase()}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button className="p-2 text-slate-400 hover:bg-slate-50 rounded-full border border-slate-100 transition-colors">
+            <UserRoundPen size={20} />
+          </button>
+          <button className="p-2 text-slate-400 hover:bg-slate-50 rounded-full transition-colors">
+            <ChevronDown size={20} />
+          </button>
+        </div>
+      </div>
+
+      {/* Shop Info Row */}
+      <button className="w-full bg-white px-4 py-5 mb-2 flex items-center justify-between border-b border-slate-100 text-slate-700 hover:bg-slate-50 transition-colors">
+        <span className="text-lg font-bold">Thông tin cửa hàng</span>
+        <ChevronRight size={20} className="text-slate-300" />
+      </button>
+
+      {/* Transaction Section */}
+      <div className="bg-white px-5 py-6 mb-2 border-b border-slate-100">
+        <h3 className="text-xl font-black text-slate-800 mb-6 tracking-tight">Giao dịch & Quản lý</h3>
+        <div className="grid grid-cols-2 gap-x-2 gap-y-4">
+          <button 
+            onClick={() => setActiveTab('ledger')}
+            className="flex items-center gap-4 p-2 hover:bg-slate-50 rounded-xl transition-colors text-left"
+          >
+            <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0">
+              <Wallet size={24} />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-base font-bold text-slate-700">Sổ quỹ</span>
+              <span className="text-[10px] font-black text-emerald-500 uppercase tracking-tight">Thu / Chi</span>
+            </div>
+          </button>
+          <button 
+            onClick={() => setActiveTab('roomManagement')}
+            className="flex items-center gap-4 p-2 hover:bg-slate-50 rounded-xl transition-colors text-left"
+          >
+            <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shrink-0">
+              <LayoutGrid size={24} />
+            </div>
+            <span className="text-base font-bold text-slate-700">Quản lý phòng</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Account & Personnel Section */}
+      <div className="bg-white px-5 py-6 mb-2 border-b border-slate-100">
+        <h3 className="text-xl font-black text-slate-800 mb-6 tracking-tight">Nhân sự & Tài khoản</h3>
+        <div className="grid grid-cols-2 gap-x-2 gap-y-4">
+          <button className="flex items-center gap-4 p-2 hover:bg-slate-50 rounded-xl transition-colors text-left">
+            <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0">
+              <UserCog size={24} />
+            </div>
+            <span className="text-base font-bold text-slate-700">Quản lý tài khoản</span>
+          </button>
+          <button className="flex items-center gap-4 p-2 hover:bg-slate-50 rounded-xl transition-colors text-left">
+            <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center shrink-0">
+              <Clock size={24} />
+            </div>
+            <span className="text-base font-bold text-slate-700">Chấm công</span>
+          </button>
+          <button className="flex items-center gap-4 p-2 hover:bg-slate-50 rounded-xl transition-colors text-left">
+            <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center shrink-0">
+              <Users size={24} />
+            </div>
+            <span className="text-base font-bold text-slate-700">Nhân viên</span>
+          </button>
+          <button className="flex items-center gap-4 p-2 hover:bg-slate-50 rounded-xl transition-colors text-left">
+            <div className="w-12 h-12 bg-slate-100 text-slate-600 rounded-2xl flex items-center justify-center shrink-0">
+              <Receipt size={24} />
+            </div>
+            <span className="text-base font-bold text-slate-700">Bảng lương</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Custom Admin Config (Existing Features) */}
+      <div className="bg-white px-5 py-6 mb-2 border-b border-slate-100">
+        <h3 className="text-xl font-black text-slate-800 mb-6 tracking-tight">Hệ thống</h3>
+        <div className="space-y-6">
+          <div className="bg-slate-50 p-6 rounded-[24px] border border-slate-100">
+            <div className="flex items-center gap-2 mb-4">
+              <Database size={18} className="text-primary" />
+              <span className="text-sm font-black uppercase tracking-widest text-slate-600">Cấu hình API</span>
+            </div>
+            <div className="flex gap-2">
+              <input 
+                type="text"
+                className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-primary/20"
+                value={apiUrl}
+                onChange={(e) => setApiUrl(e.target.value)}
+                placeholder="Link Google Sheet..."
+              />
+              <button 
+                onClick={handleSaveSettings}
+                className="px-6 bg-primary text-white rounded-2xl text-xs font-black uppercase tracking-widest shadow-lg shadow-primary/20"
+              >
+                Lưu
+              </button>
+            </div>
+            {saveStatus === 'success' && <p className="text-[10px] text-emerald-600 font-bold mt-2 ml-2">Đồng bộ thành công!</p>}
+          </div>
+        </div>
+        <div className="mt-8 flex justify-center">
+          <button 
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-8 py-4 bg-rose-50 text-rose-500 rounded-full font-black text-xs uppercase tracking-widest border border-rose-100 hover:bg-rose-100 transition-all"
+          >
+            <LogOut size={16} /> Đăng xuất
+          </button>
         </div>
       </div>
     </div>
@@ -628,7 +1144,8 @@ export default function App() {
               {[
                 { label: 'Hôm nay', offset: 0 },
                 { label: 'Ngày mai', offset: 1 },
-                { label: 'Ngày mốt', offset: 2 }
+                { label: 'Ngày mốt', offset: 2 },
+                { label: 'Ngày kia', offset: 3 }
               ].map((d) => {
                 const date = new Date();
                 date.setDate(date.getDate() + d.offset);
@@ -752,32 +1269,120 @@ export default function App() {
     );
   };
 
+  const renderLogin = () => (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md bg-white rounded-[40px] p-10 shadow-2xl shadow-primary/5 border border-slate-100"
+      >
+        <div className="text-center mb-10">
+          <div className="w-20 h-20 bg-primary/10 rounded-3xl flex items-center justify-center mx-auto mb-6 text-primary">
+            <Bed size={40} className="stroke-[2.5]" />
+          </div>
+          <h1 className="text-3xl font-black text-text-main tracking-tight uppercase mb-2">Hệ thống quản lý</h1>
+          <p className="text-slate-400 font-medium tracking-wide">Đăng nhập để tiếp tục công việc</p>
+        </div>
+
+        <form onSubmit={handleLogin} className="space-y-6">
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Tên đăng nhập</label>
+              <div className="relative">
+                <Users size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input 
+                  type="text"
+                  required
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-border-light rounded-[24px] text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all"
+                  placeholder="admin hoặc staff"
+                  value={loginForm.username}
+                  onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Mật khẩu</label>
+              <div className="relative">
+                <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input 
+                  type="password"
+                  required
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-border-light rounded-[24px] text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all"
+                  placeholder="••••••••"
+                  value={loginForm.password}
+                  onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
+                />
+              </div>
+            </div>
+          </div>
+
+          {loginError && (
+            <motion.div 
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-[11px] font-bold text-rose-500 flex items-center gap-2"
+            >
+              <AlertCircle size={14} />
+              {loginError}
+            </motion.div>
+          )}
+
+          <button 
+            type="submit"
+            className="w-full py-5 bg-primary text-white rounded-[24px] font-black text-sm uppercase tracking-widest shadow-xl shadow-primary/20 hover:opacity-90 active:scale-[0.98] transition-all transform"
+          >
+            Đăng nhập hệ thống
+          </button>
+        </form>
+
+        <div className="mt-8 pt-8 border-t border-slate-50 text-center">
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Hotel Management System v2.0</p>
+        </div>
+      </motion.div>
+    </div>
+  );
+
+  if (!isAuthenticated) return renderLogin();
+
   return (
     <div className="flex min-h-screen bg-bg font-sans">
       {/* Booking Modal */}
       <AnimatePresence>
         {isBookingModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[100] flex items-stretch md:items-center justify-center md:p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm hidden md:block"
               onClick={() => setIsBookingModalOpen(false)}
             />
             <motion.div 
               initial={{ opacity: 0, scale: 0.98, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.98, y: 10 }}
-              className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl overflow-hidden border border-border-light flex flex-col max-h-[90vh]"
+              className="relative w-full h-full lg:h-auto md:max-h-[90vh] md:max-w-xl bg-white md:rounded-[40px] shadow-2xl overflow-y-auto custom-scrollbar md:border border-border-light"
             >
-              <div className="overflow-y-auto p-8 space-y-6">
-                <h3 className="text-xl font-bold text-text-main">Tạo đặt phòng mới</h3>
-                <div className="space-y-4">
+              <div className="p-6 md:p-8 space-y-6">
+                <header className="flex justify-between items-center sticky top-0 bg-white/80 backdrop-blur-md z-10 -mx-6 md:-mx-8 px-6 md:px-8 py-2 md:py-0">
+                  <div>
+                    <h3 className="text-xl font-black text-text-main uppercase tracking-tight">Tạo đặt phòng mới</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-1">Ghi chú thông tin khách hàng và lịch trình</p>
+                  </div>
+                  <button 
+                    onClick={() => setIsBookingModalOpen(false)}
+                    className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+                  >
+                    <Plus size={24} className="rotate-45" />
+                  </button>
+                </header>
+
+                <div className="space-y-6">
                   <div className="relative">
-                    <label className="stat-label">Tìm hoặc nhập tên khách</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tìm hoặc nhập tên khách</label>
                     <input 
-                      className="w-full px-4 py-2 bg-slate-50 border border-border-light rounded-lg text-sm outline-none focus:ring-1 focus:ring-primary" 
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all mt-1.5" 
                       placeholder="Tên khách hàng"
                       value={guestSearch}
                       onChange={(e) => {
@@ -786,14 +1391,14 @@ export default function App() {
                       }}
                     />
                     {showSearchResults && guestSearch.length > 0 && (
-                      <div className="absolute z-10 w-full mt-1 bg-white border border-border-light rounded-lg shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+                      <div className="absolute z-[110] w-full mt-2 bg-white border border-border-light rounded-2xl shadow-xl overflow-hidden max-h-60 overflow-y-auto">
                         {guests.filter(g => 
                           g.name.toLowerCase().includes(guestSearch.toLowerCase()) || 
                           g.phone?.includes(guestSearch)
                         ).map(g => (
                           <div 
                             key={g.id}
-                            className="px-4 py-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-none"
+                            className="px-5 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-none group"
                             onClick={() => {
                               setGuestSearch(g.name);
                               setGuestEmail(g.email);
@@ -802,181 +1407,179 @@ export default function App() {
                               setShowSearchResults(false);
                             }}
                           >
-                            <div className="text-sm font-bold text-text-main">{g.name}</div>
-                            <div className="text-[10px] text-slate-400 font-medium">{g.phone} • {g.email}</div>
+                            <div className="text-sm font-black text-text-main group-hover:text-primary transition-colors">{g.name}</div>
+                            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{g.phone} • {g.email}</div>
                           </div>
                         ))}
                         <div 
-                          className="px-4 py-2 text-xs text-primary font-bold hover:bg-blue-50 cursor-pointer"
+                          className="px-5 py-3 text-xs text-primary font-black uppercase tracking-widest hover:bg-primary/5 cursor-pointer"
                           onClick={() => setShowSearchResults(false)}
                         >
-                          + Thêm khách mới: "{guestSearch}"
+                          + Sử dụng tên: "{guestSearch}"
                         </div>
                       </div>
                     )}
                   </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="stat-label">Số điện thoại</label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Số điện thoại</label>
+                      <input 
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                        placeholder="09xx xxx xxx" 
+                        value={guestPhone}
+                        onChange={(e) => setGuestPhone(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email</label>
+                      <input 
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                        placeholder="khach@email.com" 
+                        value={guestEmail}
+                        onChange={(e) => setGuestEmail(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Địa chỉ thường trú</label>
                     <input 
-                      className="w-full px-4 py-2 bg-slate-50 border border-border-light rounded-lg text-sm outline-none focus:ring-1 focus:ring-primary" 
-                      placeholder="Số điện thoại" 
-                      value={guestPhone}
-                      onChange={(e) => setGuestPhone(e.target.value)}
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                      placeholder="Số nhà, đường, tỉnh thành..." 
+                      value={guestAddress}
+                      onChange={(e) => setGuestAddress(e.target.value)}
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="stat-label">Email</label>
-                    <input 
-                      className="w-full px-4 py-2 bg-slate-50 border border-border-light rounded-lg text-sm outline-none focus:ring-1 focus:ring-primary" 
-                      placeholder="địa chỉ email" 
-                      value={guestEmail}
-                      onChange={(e) => setGuestEmail(e.target.value)}
-                    />
-                  </div>
-                </div>
 
-                <div className="space-y-1">
-                  <label className="stat-label">Địa chỉ</label>
-                  <input 
-                    className="w-full px-4 py-2 bg-slate-50 border border-border-light rounded-lg text-sm outline-none focus:ring-1 focus:ring-primary" 
-                    placeholder="Địa chỉ thường trú" 
-                    value={guestAddress}
-                    onChange={(e) => setGuestAddress(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="stat-label">Số căn cước công dân (CCCD)</label>
-                  <div className="flex gap-2">
-                    <input 
-                      className="flex-1 px-4 py-2 bg-slate-50 border border-border-light rounded-lg text-sm outline-none focus:ring-1 focus:ring-primary" 
-                      placeholder="Nhập số CCCD" 
-                      value={currentIdCard}
-                      onChange={(e) => setCurrentIdCard(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && currentIdCard.trim()) {
-                          e.preventDefault();
-                          if (!guestIdCards.includes(currentIdCard.trim())) {
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Giấy tờ tùy thân (CCCD / Passport)</label>
+                    <div className="flex gap-2">
+                      <input 
+                        className="flex-1 px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                        placeholder="Nhập số giấy tờ" 
+                        value={currentIdCard}
+                        onChange={(e) => setCurrentIdCard(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && currentIdCard.trim()) {
+                            e.preventDefault();
+                            if (!guestIdCards.includes(currentIdCard.trim())) {
+                              setGuestIdCards([...guestIdCards, currentIdCard.trim()]);
+                            }
+                            setCurrentIdCard('');
+                          }
+                        }}
+                      />
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          if (currentIdCard.trim() && !guestIdCards.includes(currentIdCard.trim())) {
                             setGuestIdCards([...guestIdCards, currentIdCard.trim()]);
                           }
                           setCurrentIdCard('');
-                        }
-                      }}
-                    />
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        if (currentIdCard.trim() && !guestIdCards.includes(currentIdCard.trim())) {
-                          setGuestIdCards([...guestIdCards, currentIdCard.trim()]);
-                        }
-                        setCurrentIdCard('');
-                      }}
-                      className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold hover:bg-slate-200"
-                    >
-                      Thêm
-                    </button>
-                  </div>
-                  {guestIdCards.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {guestIdCards.map((card, idx) => (
-                        <div key={idx} className="flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-primary border border-blue-100 rounded-full text-xs font-bold">
-                          {card}
-                          <button 
-                            type="button"
-                            onClick={() => setGuestIdCards(guestIdCards.filter((_, i) => i !== idx))}
-                            className="hover:text-red-500"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
+                        }}
+                        className="px-6 py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10"
+                      >
+                        Thêm
+                      </button>
                     </div>
-                  )}
-                </div>
+                    {guestIdCards.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {guestIdCards.map((card, idx) => (
+                          <div key={idx} className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-xl text-[11px] font-black">
+                            {card}
+                            <button 
+                              type="button"
+                              onClick={() => setGuestIdCards(guestIdCards.filter((_, i) => i !== idx))}
+                              className="text-rose-500 hover:scale-110 transition-transform"
+                            >
+                              <Plus size={14} className="rotate-45" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-                <div className="space-y-1">
-                  <label className="stat-label">Chọn phòng</label>
-                  <select 
-                    value={preSelectedRoomId || ''}
-                    onChange={(e) => setPreSelectedRoomId(e.target.value)}
-                    className="w-full px-4 py-2 bg-slate-50 border border-border-light rounded-lg text-sm outline-none cursor-pointer focus:ring-1 focus:ring-primary"
-                  >
-                    <option value="" disabled>Chọn phòng...</option>
-                    {rooms.filter(r => r.status === RoomStatus.AVAILABLE || r.id === preSelectedRoomId).map(room => (
-                      <option key={room.id} value={room.id}>Phòng {room.number} - {translateRoomType(room.type)} ({formatCurrency(room.pricePerNight)})</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="stat-label">Ngày đến</label>
-                    <input 
-                      type="date" 
-                      value={bookingCheckIn}
-                      onChange={(e) => setBookingCheckIn(e.target.value)}
-                      className="w-full px-4 py-2 bg-slate-50 border border-border-light rounded-lg text-sm outline-none focus:ring-1 focus:ring-primary" 
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="stat-label">Ngày đi</label>
-                    <input 
-                      type="date" 
-                      value={bookingCheckOut}
-                      onChange={(e) => setBookingCheckOut(e.target.value)}
-                      className="w-full px-4 py-2 bg-slate-50 border border-border-light rounded-lg text-sm outline-none focus:ring-1 focus:ring-primary" 
-                    />
-                  </div>
-                </div>
-
-                <div className="p-4 bg-slate-50 rounded-2xl space-y-3">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tổng tiền dự kiến</label>
-                    <span className="font-bold text-text-main">
-                      {(() => {
-                        const room = rooms.find(r => r.id === preSelectedRoomId);
-                        const nights = Math.ceil((new Date(bookingCheckOut).getTime() - new Date(bookingCheckIn).getTime()) / (1000 * 3600 * 24)) || 1;
-                        return formatCurrency((room?.pricePerNight || 0) * nights);
-                      })()}
-                    </span>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Số tiền khách trả trước</label>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Chọn phòng</label>
                     <div className="relative">
-                      <input 
-                        type="number"
-                        value={paidAmount}
-                        onChange={(e) => setPaidAmount(Number(e.target.value))}
-                        className="w-full pl-4 pr-12 py-2 bg-white border border-border-light rounded-lg text-sm font-bold outline-none focus:ring-1 focus:ring-primary"
-                        placeholder="0"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">VND</span>
+                      <select 
+                        value={preSelectedRoomId || ''}
+                        onChange={(e) => setPreSelectedRoomId(e.target.value)}
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none cursor-pointer focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all appearance-none"
+                      >
+                        <option value="" disabled>Chọn phòng trống...</option>
+                        {rooms.filter(r => r.status === RoomStatus.AVAILABLE || r.id === preSelectedRoomId).map(room => (
+                          <option key={room.id} value={room.id}>
+                            Phòng {room.number} — {translateRoomType(room.type)} ({formatCurrency(room.pricePerNight)})
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                        <Package size={18} />
+                      </div>
                     </div>
                   </div>
-                  <div className="flex justify-between items-center pt-2 border-t border-slate-200">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Còn lại</label>
-                    <span className="font-black text-primary">
-                      {(() => {
-                        const room = rooms.find(r => r.id === preSelectedRoomId);
-                        const nights = Math.ceil((new Date(bookingCheckOut).getTime() - new Date(bookingCheckIn).getTime()) / (1000 * 3600 * 24)) || 1;
-                        const total = (room?.pricePerNight || 0) * nights;
-                        return formatCurrency(total - paidAmount);
-                      })()}
-                    </span>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Ngày nhận phòng</label>
+                      <input 
+                        type="date" 
+                        value={bookingCheckIn}
+                        onChange={(e) => setBookingCheckIn(e.target.value)}
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Ngày trả phòng</label>
+                      <input 
+                        type="date" 
+                        value={bookingCheckOut}
+                        onChange={(e) => setBookingCheckOut(e.target.value)}
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-slate-900 rounded-[32px] space-y-4 shadow-xl">
+                    <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      <span>Tổng tiền dự kiến</span>
+                      <span className="text-white text-base">
+                        {(() => {
+                          const room = rooms.find(r => r.id === preSelectedRoomId);
+                          const nights = Math.ceil((new Date(bookingCheckOut).getTime() - new Date(bookingCheckIn).getTime()) / (1000 * 3600 * 24)) || 1;
+                          return formatCurrency((room?.pricePerNight || 0) * nights);
+                        })()}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-white uppercase tracking-widest ml-1">Số tiền đặt cọc trước (VND)</label>
+                      <div className="relative">
+                        <input 
+                          type="number"
+                          value={paidAmount}
+                          onChange={(e) => setPaidAmount(Number(e.target.value))}
+                          className="w-full px-5 py-4 bg-white/10 border border-white/10 rounded-2xl text-lg font-black text-primary outline-none focus:ring-4 focus:ring-primary/20 focus:border-primary/40 transition-all placeholder:text-slate-600"
+                          placeholder="0"
+                        />
+                        <span className="absolute right-5 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400 tracking-widest">VND</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-                <div className="flex gap-3 pt-6 sticky bottom-0 bg-white">
+
+                <div className="pt-6 sticky bottom-0 bg-white/80 backdrop-blur-md -mx-6 md:-mx-8 px-6 md:px-8 pb-4 flex flex-col md:flex-row gap-4">
                   <button 
                     onClick={() => setIsBookingModalOpen(false)}
-                    className="flex-1 py-3 border border-border-light rounded-xl font-bold text-slate-500 hover:bg-slate-50 transition-all"
+                    className="flex-1 py-4 bg-slate-100 text-slate-400 rounded-2xl font-black text-xs uppercase tracking-widest border border-slate-200 hover:bg-slate-200 transition-all active:scale-95"
                   >
                     Hủy bỏ
                   </button>
                   <button 
                     onClick={handleCreateBooking}
-                    className="flex-1 py-3 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:opacity-90 transition-all"
+                    className="flex-[2] py-4 bg-primary text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-primary/20 hover:opacity-90 transition-all active:scale-95"
                   >
                     Xác nhận đặt phòng
                   </button>
@@ -989,63 +1592,74 @@ export default function App() {
 
       <AnimatePresence>
         {isDetailModalOpen && selectedBookingDetails && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[100] flex items-stretch md:items-center justify-center md:p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm hidden md:block"
               onClick={() => setIsDetailModalOpen(false)}
             />
             <motion.div 
               initial={{ opacity: 0, scale: 0.98, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.98, y: 10 }}
-              className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden border border-border-light"
+              className="relative w-full h-full lg:h-auto md:max-h-[90vh] md:max-w-lg bg-white md:rounded-[40px] shadow-2xl overflow-y-auto custom-scrollbar md:border border-border-light"
             >
-              <div className="p-8 space-y-6">
-                <div className="flex justify-between items-start">
-                  <h3 className="text-xl font-black text-text-main">Chi tiết đặt phòng</h3>
-                  <div className="bg-primary/10 text-primary px-3 py-1 rounded-full text-xs font-bold">
-                    Phòng {rooms.find(r => r.id === selectedBookingDetails.roomId)?.number}
+              <div className="p-6 md:p-8 space-y-6">
+                <div className="flex justify-between items-center sticky top-0 bg-white/80 backdrop-blur-md z-10 -mx-6 md:-mx-8 px-6 md:px-8 py-2 md:py-0">
+                  <div>
+                    <h3 className="text-xl font-black text-text-main">Chi tiết đặt phòng</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mã đặt phòng #{selectedBookingDetails.id}</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="bg-primary/10 text-primary px-3 py-1 rounded-full text-xs font-bold">
+                      Phòng {rooms.find(r => r.id === selectedBookingDetails.roomId)?.number}
+                    </div>
+                    <button 
+                      onClick={() => setIsDetailModalOpen(false)}
+                      className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+                    >
+                      <Plus size={24} className="rotate-45" />
+                    </button>
                   </div>
                 </div>
 
                 <div className="space-y-4">
-                  <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl">
-                    <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-black text-xl">
+                  <div className="flex items-center gap-4 p-5 bg-slate-50 rounded-3xl border border-slate-100">
+                    <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary font-black text-2xl">
                       {selectedBookingDetails.guestName.charAt(0)}
                     </div>
                     <div>
                       <h4 className="font-bold text-text-main text-lg">{selectedBookingDetails.guestName}</h4>
-                      <p className="text-xs text-slate-500 font-medium">{selectedBookingDetails.guestPhone}</p>
+                      <p className="text-sm text-slate-500 font-bold tracking-tight">{selectedBookingDetails.guestPhone}</p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 border border-slate-100 rounded-2xl">
+                    <div className="p-4 border border-slate-100 rounded-3xl bg-white shadow-sm">
                       <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Ngày đến</p>
                       <p className="font-bold text-text-main text-sm">{selectedBookingDetails.checkIn}</p>
                     </div>
-                    <div className="p-4 border border-slate-100 rounded-2xl">
+                    <div className="p-4 border border-slate-100 rounded-3xl bg-white shadow-sm">
                       <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Ngày đi</p>
                       <p className="font-bold text-text-main text-sm">{selectedBookingDetails.checkOut}</p>
                     </div>
                   </div>
 
                   {selectedBookingDetails.guestAddress && (
-                    <div className="p-4 border border-slate-100 rounded-2xl">
+                    <div className="p-4 border border-slate-100 rounded-3xl">
                       <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Địa chỉ</p>
                       <p className="font-bold text-text-main text-sm">{selectedBookingDetails.guestAddress}</p>
                     </div>
                   )}
 
                   {selectedBookingDetails.guestIdCards && selectedBookingDetails.guestIdCards.length > 0 && (
-                    <div className="p-4 border border-slate-100 rounded-2xl">
-                      <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Danh sách CCCD</p>
-                      <div className="flex flex-wrap gap-2 mt-1">
+                    <div className="p-4 border border-slate-100 rounded-3xl">
+                      <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Danh sách CCCD / Passport</p>
+                      <div className="flex flex-wrap gap-2 mt-2">
                         {selectedBookingDetails.guestIdCards.map((card, idx) => (
-                          <span key={idx} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold">
+                          <span key={idx} className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold border border-slate-200">
                             {card}
                           </span>
                         ))}
@@ -1053,38 +1667,272 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="p-5 bg-slate-50 rounded-2xl space-y-3">
-                    <div className="flex justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-widest">
+                  <div className="p-6 bg-slate-900 rounded-[32px] space-y-4 shadow-xl">
+                    <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
                       <span>Tổng thanh toán</span>
-                      <span className="text-text-main text-sm">{formatCurrency(selectedBookingDetails.totalPrice)}</span>
+                      <span className="text-white text-sm">{formatCurrency(selectedBookingDetails.totalPrice)}</span>
                     </div>
-                    <div className="flex justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-widest">
-                      <span>Đã thanh toán</span>
-                      <span className="text-emerald-600 text-sm">{formatCurrency(selectedBookingDetails.paidAmount)}</span>
+                    <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      <span>Đã đặt cọc</span>
+                      <span className="text-emerald-400 text-sm">{formatCurrency(selectedBookingDetails.paidAmount)}</span>
                     </div>
-                    <div className="flex justify-between items-center pt-3 border-t border-slate-200">
-                      <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Còn lại</span>
-                      <span className="text-lg font-black text-primary">
+                    <div className="flex justify-between items-center pt-4 border-t border-slate-800">
+                      <span className="text-[10px] font-black text-white uppercase tracking-widest">Còn lại</span>
+                      <span className="text-2xl font-black text-primary">
                         {formatCurrency(selectedBookingDetails.totalPrice - selectedBookingDetails.paidAmount)}
                       </span>
                     </div>
                   </div>
 
-                  <div className="flex justify-between items-center px-2">
-                    <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Trạng thái đặt phòng</span>
-                    <span className={`status-badge-modern ${selectedBookingDetails.status === BookingStatus.CHECKED_IN ? 'badge-occupied' : 'bg-slate-100 text-slate-600'}`}>
-                      {selectedBookingDetails.status === BookingStatus.CHECKED_IN ? 'Đang ở' : 'Đã xác nhận'}
+                  <div className="flex justify-between items-center px-4 py-4 bg-slate-50 rounded-3xl border border-slate-100">
+                    <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Trạng thái</span>
+                    <span className={`status-badge-modern ${selectedBookingDetails.status === BookingStatus.CHECKED_IN ? 'badge-occupied' : 'bg-slate-200 text-slate-600'}`}>
+                      {selectedBookingDetails.status === BookingStatus.CHECKED_IN ? 'Đang lưu trú' : 'Đã xác nhận'}
                     </span>
+                  </div>
+
+                  {selectedBookingDetails.status === BookingStatus.CHECKED_IN && (
+                    <div className="p-6 border border-primary/20 bg-primary/5 rounded-[32px] space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-2">
+                          <Package size={14} /> Dịch vụ phát sinh
+                        </h4>
+                        <button 
+                          onClick={() => setIsServiceModalOpen(true)}
+                          className="text-[10px] font-black text-primary uppercase tracking-widest bg-white px-4 py-2 rounded-xl border border-primary/20 hover:bg-primary hover:text-white transition-all shadow-sm"
+                        >
+                          + Thêm dịch vụ
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                        {selectedBookingDetails.services && selectedBookingDetails.services.length > 0 ? (
+                          selectedBookingDetails.services.map((s, idx) => (
+                            <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+                              <div>
+                                <p className="text-xs font-black text-text-main">{s.name}</p>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">{formatCurrency(s.price)} × {s.quantity}</p>
+                              </div>
+                              <span className="text-xs font-black text-text-main">{formatCurrency(s.price * s.quantity)}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-6">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Chưa có dịch vụ nào được ghi nhận</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-4 sticky bottom-0 bg-white/80 backdrop-blur-md -mx-6 md:-mx-8 px-6 md:px-8 pb-4">
+                  <button 
+                    onClick={() => setIsDetailModalOpen(false)}
+                    className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95 shadow-xl shadow-slate-900/20"
+                  >
+                    Đóng cửa sổ
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isGuestModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              onClick={() => setIsGuestModalOpen(false)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 space-y-8">
+                <header>
+                  <h2 className="text-2xl font-black text-text-main uppercase tracking-tight">
+                    {editingGuest ? 'Cập nhật thông tin khách' : 'Thêm khách hàng mới'}
+                  </h2>
+                  <p className="text-slate-500 text-sm font-bold">Điền đầy đủ thông tin bên dưới</p>
+                </header>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Họ và tên</label>
+                    <input 
+                      type="text"
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all"
+                      placeholder="Nguyễn Văn A"
+                      value={newGuestData.name}
+                      onChange={(e) => setNewGuestData({...newGuestData, name: e.target.value})}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Số điện thoại</label>
+                      <input 
+                        type="tel"
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all"
+                        placeholder="09xxx"
+                        value={newGuestData.phone ?? ''}
+                        onChange={(e) => setNewGuestData({...newGuestData, phone: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">CCCD / Passport</label>
+                      <input 
+                        type="text"
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all"
+                        placeholder="Số định danh"
+                        value={newGuestData.identityCard}
+                        onChange={(e) => setNewGuestData({...newGuestData, identityCard: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email</label>
+                    <input 
+                      type="email"
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all"
+                      placeholder="email@address.com"
+                      value={newGuestData.email}
+                      onChange={(e) => setNewGuestData({...newGuestData, email: e.target.value})}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Địa chỉ</label>
+                    <textarea 
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all min-h-[100px]"
+                      placeholder="Địa chỉ thường trú"
+                      value={newGuestData.address}
+                      onChange={(e) => setNewGuestData({...newGuestData, address: e.target.value})}
+                    />
                   </div>
                 </div>
 
-                <div className="pt-2">
+                <div className="flex gap-4 pt-4">
                   <button 
-                    onClick={() => setIsDetailModalOpen(false)}
-                    className="w-full py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-all"
+                    onClick={() => setIsGuestModalOpen(false)}
+                    className="flex-1 py-4 bg-white text-slate-400 rounded-2xl font-black text-xs uppercase tracking-widest border border-slate-200 hover:bg-slate-50 active:scale-[0.98] transition-all"
                   >
-                    Đóng
+                    Hủy bỏ
                   </button>
+                  <button 
+                    onClick={handleGuestAction}
+                    className="flex-[2] py-4 bg-primary text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-primary/20 hover:opacity-90 active:scale-[0.98] transition-all"
+                  >
+                    {editingGuest ? 'Lưu thay đổi' : 'Thêm khách hàng'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isGuestDetailModalOpen && selectedGuest && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              onClick={() => setIsGuestDetailModalOpen(false)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-xl rounded-[40px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8">
+                <header className="flex justify-between items-start mb-8">
+                  <div className="flex items-center gap-5">
+                    <div className="w-16 h-16 rounded-3xl bg-primary/10 text-primary flex items-center justify-center text-3xl font-black">
+                      {selectedGuest.name.charAt(0)}
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-black text-text-main">{selectedGuest.name}</h2>
+                      <p className="text-sm font-bold text-slate-400">Khách hàng #{selectedGuest.id}</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setIsGuestDetailModalOpen(false)}
+                    className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                  >
+                    <Plus size={24} className="rotate-45" />
+                  </button>
+                </header>
+
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Số điện thoại</p>
+                    <p className="font-bold text-text-main">{selectedGuest.phone}</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Lượt đặt phòng</p>
+                    <p className="font-bold text-text-main">{selectedGuest.totalBookings} lần</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">CCCD / ID Card</p>
+                    <p className="font-bold text-text-main">{selectedGuest.identityCard || 'Chưa có'}</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Lần cuối ghé thăm</p>
+                    <p className="font-bold text-text-main">{selectedGuest.lastVisit}</p>
+                  </div>
+                  <div className="col-span-2 bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Email</p>
+                    <p className="font-bold text-text-main">{selectedGuest.email || 'Chưa có'}</p>
+                  </div>
+                  <div className="col-span-2 bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Địa chỉ</p>
+                    <p className="font-bold text-text-main">{selectedGuest.address || 'Chưa có'}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <TrendingUp size={14} /> Lịch sử đặt phòng
+                  </h3>
+                  <div className="max-h-[160px] overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                    {bookings.filter(b => b.guestPhone === selectedGuest.phone).map((b, i) => (
+                      <div key={i} className="p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
+                         <div>
+                            <p className="text-sm font-bold text-text-main">Phòng {rooms.find(r => r.id === b.roomId)?.number}</p>
+                            <p className="text-[10px] font-medium text-slate-400">{b.checkIn} - {b.checkOut}</p>
+                         </div>
+                         <div className="text-right">
+                            <p className="text-sm font-black text-primary">{formatCurrency(b.totalPrice)}</p>
+                            <span className="text-[9px] font-black uppercase text-emerald-500">Thành công</span>
+                         </div>
+                      </div>
+                    ))}
+                    {bookings.filter(b => b.guestPhone === selectedGuest.phone).length === 0 && (
+                      <p className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">Chưa có lịch sử đặt phòng</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex gap-4 mt-6">
+                   <button 
+                    onClick={() => {
+                        setIsGuestDetailModalOpen(false);
+                        openGuestModal(selectedGuest);
+                    }}
+                    className="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95"
+                   >
+                     Chỉnh sửa hồ sơ
+                   </button>
                 </div>
               </div>
             </motion.div>
@@ -1102,8 +1950,8 @@ export default function App() {
         </div>
 
         <nav className="flex-1 space-y-1">
-          {(['dashboard', 'rooms', 'roomManagement', 'bookings', 'guests', 'settings'] as const).filter(tab => {
-            if (currentUser === UserRole.STAFF && (tab === 'dashboard' || tab === 'settings' || tab === 'roomManagement')) return false;
+          {(['dashboard', 'rooms', 'roomManagement', 'bookings', 'guests', 'ledger', 'settings'] as const).filter(tab => {
+            if (currentUser === UserRole.STAFF && (tab === 'dashboard' || tab === 'settings' || tab === 'roomManagement' || tab === 'ledger')) return false;
             return true;
           }).map((tab) => (
             <button
@@ -1116,13 +1964,15 @@ export default function App() {
               {tab === 'roomManagement' && <LayoutGrid size={18} />}
               {tab === 'bookings' && <Calendar size={18} />}
               {tab === 'guests' && <Users size={18} />}
+              {tab === 'ledger' && <Wallet size={18} />}
               {tab === 'settings' && <Settings size={18} />}
               <span className="capitalize">
                 {tab === 'dashboard' ? 'Tổng quan' : 
                  tab === 'rooms' ? 'Sơ đồ phòng' :
                  tab === 'roomManagement' ? 'Quản lý phòng' :
                  tab === 'bookings' ? 'Đặt phòng' :
-                 tab === 'guests' ? 'Khách hàng' : 'Cài đặt'}
+                 tab === 'guests' ? 'Khách hàng' : 
+                 tab === 'ledger' ? 'Sổ quỹ' : 'Cài đặt'}
               </span>
             </button>
           ))}
@@ -1163,7 +2013,10 @@ export default function App() {
               </div>
             </div>
           </div>
-          <button className="w-full flex items-center gap-3 px-6 py-3 text-slate-400 hover:text-rose-600 transition-colors text-sm font-medium">
+          <button 
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-6 py-3 text-slate-400 hover:text-rose-600 transition-colors text-sm font-medium border border-transparent hover:border-rose-100/50 hover:bg-rose-50 rounded-2xl"
+          >
             <LogOut size={18} />
             <span className="hidden lg:block">Đăng xuất</span>
           </button>
@@ -1171,31 +2024,31 @@ export default function App() {
       </aside>
 
       {/* Bottom Nav - Mobile Only */}
-      <nav className="fixed bottom-0 left-0 right-0 lg:hidden bg-white border-t border-border-light p-2 flex items-center justify-around z-50 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
-        {(['dashboard', 'rooms', 'roomManagement', 'bookings', 'guests'] as const).filter(tab => {
-          if (currentUser === UserRole.STAFF && (tab === 'dashboard' || tab === 'roomManagement')) return false;
-          return true;
-        }).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex flex-col items-center gap-1 p-2 transition-all ${
-              activeTab === tab ? 'text-primary' : 'text-slate-400'
-            }`}
-          >
-            {tab === 'dashboard' && <BarChart3 size={20} />}
-            {tab === 'rooms' && <Bed size={20} />}
-            {tab === 'roomManagement' && <LayoutGrid size={20} />}
-            {tab === 'bookings' && <Calendar size={20} />}
-            {tab === 'guests' && <Users size={20} />}
-            <span className="text-[10px] font-bold uppercase tracking-tight">
-              {tab === 'dashboard' ? 'Tổng quan' : 
-               tab === 'rooms' ? 'P.Đồ' :
-               tab === 'roomManagement' ? 'Q.Lý' :
-               tab === 'bookings' ? 'Đặt phòng' : 'Khách'}
-            </span>
-          </button>
-        ))}
+      <nav className="fixed bottom-0 left-0 right-0 lg:hidden bg-white border-t border-slate-100 p-1 flex items-center justify-around z-50 shadow-[0_-2px_15px_rgba(0,0,0,0.06)] h-[72px]">
+        {(['dashboard', 'rooms', 'bookings', 'guests', 'settings'] as const).map((tab) => {
+          const isActive = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex flex-col items-center justify-center gap-1 min-w-[64px] h-full transition-all rounded-2xl ${
+                isActive ? 'text-primary bg-primary/5' : 'text-slate-400'
+              }`}
+            >
+              {tab === 'dashboard' && <BarChart3 size={24} className={isActive ? 'stroke-[2.5]' : ''} />}
+              {tab === 'rooms' && <Bed size={24} className={isActive ? 'stroke-[2.5]' : ''} />}
+              {tab === 'bookings' && <Calendar size={24} className={isActive ? 'stroke-[2.5]' : ''} />}
+              {tab === 'guests' && <Users size={24} className={isActive ? 'stroke-[2.5]' : ''} />}
+              {tab === 'settings' && <Menu size={24} className={isActive ? 'stroke-[2.5]' : ''} />}
+              <span className={`text-[9px] font-black uppercase tracking-tight ${isActive ? 'text-primary' : 'text-slate-400'}`}>
+                {tab === 'dashboard' ? 'Tổng quan' : 
+                 tab === 'rooms' ? 'Sơ đồ' :
+                 tab === 'bookings' ? 'Đặt phòng' :
+                 tab === 'guests' ? 'Khách hàng' : 'Nhiều hơn'}
+              </span>
+            </button>
+          );
+        })}
       </nav>
 
       <main className="flex-1 p-6 lg:p-10 overflow-y-auto w-full max-w-full">
@@ -1220,8 +2073,11 @@ export default function App() {
               STAFF
             </button>
           </div>
-          <button className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-full border border-border-light">
-            <Bell size={18} />
+          <button 
+            onClick={handleLogout}
+            className="lg:hidden p-2 text-rose-500 hover:bg-rose-50 rounded-full border border-border-light"
+          >
+            <LogOut size={18} />
           </button>
         </header>
 
@@ -1238,6 +2094,7 @@ export default function App() {
             {activeTab === 'roomManagement' && renderRoomManagement()}
             {activeTab === 'bookings' && renderBookings()}
             {activeTab === 'guests' && renderGuests()}
+            {activeTab === 'ledger' && renderLedger()}
             {activeTab === 'settings' && renderSettings()}
           </motion.div>
         </AnimatePresence>
@@ -1343,6 +2200,189 @@ export default function App() {
                     className="flex-[2] py-4 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/20 hover:opacity-90 transition-all active:scale-95"
                   >
                     {editingRoom ? 'Lưu thay đổi' : 'Tạo phòng'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isTransactionModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              onClick={() => setIsTransactionModalOpen(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-lg bg-white rounded-[40px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 space-y-8">
+                <header>
+                  <h2 className="text-2xl font-black text-text-main uppercase tracking-tight">
+                    {editingTransaction ? 'Cập nhật thu chi' : 'Thêm thu chi mới'}
+                  </h2>
+                  <p className="text-slate-500 text-sm font-bold">Ghi nhận thông tin giao dịch tài chính</p>
+                </header>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+                    <button 
+                      onClick={() => setNewTransactionData({...newTransactionData, type: TransactionType.INCOME})}
+                      className={`py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                        newTransactionData.type === TransactionType.INCOME ? 'bg-white shadow-sm text-emerald-600' : 'text-slate-500'
+                      }`}
+                    >
+                      Khoản Thu
+                    </button>
+                    <button 
+                      onClick={() => setNewTransactionData({...newTransactionData, type: TransactionType.EXPENSE})}
+                      className={`py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                        newTransactionData.type === TransactionType.EXPENSE ? 'bg-white shadow-sm text-rose-600' : 'text-slate-500'
+                      }`}
+                    >
+                      Khoản Chi
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Số tiền (VND)</label>
+                    <input 
+                      type="number"
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-lg font-black text-primary outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all"
+                      placeholder="0"
+                      value={newTransactionData.amount}
+                      onChange={(e) => setNewTransactionData({...newTransactionData, amount: Number(e.target.value)})}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Hạng mục</label>
+                      <select 
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all appearance-none"
+                        value={newTransactionData.category}
+                        onChange={(e) => setNewTransactionData({...newTransactionData, category: e.target.value})}
+                      >
+                        <option value="Phòng">Tiền phòng</option>
+                        <option value="Dịch vụ">Dịch vụ khách hàng</option>
+                        <option value="Điện nước">Điện & Nước</option>
+                        <option value="Lương">Lương nhân viên</option>
+                        <option value="Vật tư">Mua sắm vật tư</option>
+                        <option value="Khác">Khác</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Ngày giao dịch</label>
+                      <input 
+                        type="date"
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all"
+                        value={newTransactionData.date}
+                        onChange={(e) => setNewTransactionData({...newTransactionData, date: e.target.value})}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Phương thức thanh toán</label>
+                    <select 
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all appearance-none"
+                        value={newTransactionData.paymentMethod}
+                        onChange={(e) => setNewTransactionData({...newTransactionData, paymentMethod: e.target.value})}
+                      >
+                        <option value="Tiền mặt">Tiền mặt</option>
+                        <option value="Chuyển khoản">Chuyển khoản</option>
+                        <option value="Thẻ">Quẹt thẻ</option>
+                      </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Diễn giải</label>
+                    <textarea 
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all min-h-[80px]"
+                      placeholder="Chi tiết về khoản thu chi này..."
+                      value={newTransactionData.description}
+                      onChange={(e) => setNewTransactionData({...newTransactionData, description: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    onClick={() => setIsTransactionModalOpen(false)}
+                    className="flex-1 py-4 bg-white text-slate-400 rounded-2xl font-black text-xs uppercase tracking-widest border border-slate-200 hover:bg-slate-50 active:scale-[0.98] transition-all"
+                  >
+                    Hủy bỏ
+                  </button>
+                  <button 
+                    onClick={handleTransactionAction}
+                    className="flex-[2] py-4 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-emerald-600/20 hover:opacity-90 active:scale-[0.98] transition-all"
+                  >
+                    {editingTransaction ? 'Lưu thay đổi' : 'Ghi nhận'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isServiceModalOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              onClick={() => setIsServiceModalOpen(false)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-sm rounded-[40px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 space-y-6">
+                <header>
+                  <h2 className="text-xl font-black text-text-main uppercase tracking-tight">Chọn dịch vụ</h2>
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">Sử dụng cho phòng {rooms.find(r => r.id === selectedBookingDetails?.roomId)?.number}</p>
+                </header>
+
+                <div className="grid grid-cols-1 gap-3">
+                  {availableServices.map((service, idx) => (
+                    <button 
+                      key={idx}
+                      onClick={() => {
+                        addServiceToBooking(service.name, service.price);
+                        setIsServiceModalOpen(false);
+                      }}
+                      className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl hover:border-primary hover:bg-primary/5 transition-all group"
+                    >
+                      <div className="text-left">
+                        <p className="text-sm font-black text-text-main group-hover:text-primary transition-colors">{service.name}</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase">{formatCurrency(service.price)} / đơn vị</p>
+                      </div>
+                      <div className="w-8 h-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all">
+                        <Plus size={16} />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="pt-4">
+                  <button 
+                    onClick={() => setIsServiceModalOpen(false)}
+                    className="w-full py-4 bg-slate-100 text-slate-400 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all"
+                  >
+                    Hủy bỏ
                   </button>
                 </div>
               </div>

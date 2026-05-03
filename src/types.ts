@@ -44,6 +44,14 @@ export enum BookingStatus {
   CANCELLED = 'CANCELLED',
 }
 
+export interface RoomService {
+  id: string;
+  name: string;
+  price: number;
+  quantity: number;
+  createdAt: string;
+}
+
 export interface Booking {
   id: string;
   roomId: string;
@@ -58,6 +66,7 @@ export interface Booking {
   paidAmount: number;
   guestIdCards?: string[];
   guestsCount: number;
+  services?: RoomService[];
 }
 
 export interface Guest {
@@ -71,9 +80,26 @@ export interface Guest {
   totalBookings: number;
 }
 
+export enum TransactionType {
+  INCOME = 'INCOME',
+  EXPENSE = 'EXPENSE',
+}
+
+export interface Transaction {
+  id: string;
+  type: TransactionType;
+  amount: number;
+  category: string;
+  description: string;
+  date: string; // ISO Date
+  paymentMethod: string;
+}
+
 export interface DashboardStats {
   totalRooms: number;
   occupiedRooms: number;
+  availableRooms: number;
+  bookedNotReceived: number;
   expectedArrivals: number;
   expectedDepartures: number;
   dailyRevenue: number;
