@@ -8,10 +8,19 @@ export enum UserRole {
   STAFF = 'staff'
 }
 
+export interface Branch {
+  id: string;
+  name: string;
+  address: string;
+}
+
 export interface User {
   id: string;
   name: string;
   role: UserRole;
+  username: string;
+  password?: string;
+  branchId?: string; // If undefined, user can manage all branches
 }
 
 export enum RoomStatus {
@@ -35,6 +44,7 @@ export interface Room {
   pricePerNight: number;
   status: RoomStatus;
   floor: number;
+  branchId: string;
 }
 
 export enum BookingStatus {
@@ -55,10 +65,12 @@ export interface RoomService {
 export interface Booking {
   id: string;
   roomId: string;
+  branchId: string;
   guestName: string;
   guestEmail: string;
   guestPhone: string;
   guestAddress?: string;
+  bookingDate?: string; // ISO Date - Ngày đặt bàn
   checkIn: string; // ISO Date
   checkOut: string; // ISO Date
   status: BookingStatus;
@@ -87,6 +99,7 @@ export enum TransactionType {
 
 export interface Transaction {
   id: string;
+  branchId: string;
   type: TransactionType;
   amount: number;
   category: string;

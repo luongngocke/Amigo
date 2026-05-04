@@ -11,6 +11,7 @@ import {
   Users, 
   LogOut, 
   Plus, 
+  Minus,
   Search, 
   Settings, 
   Bell,
@@ -27,7 +28,7 @@ import {
   Trash2,
   LayoutGrid,
   Lock,
-  User,
+  User as UserIcon,
   ShieldCheck,
   RefreshCw,
   ShoppingCart,
@@ -46,32 +47,86 @@ import {
   Receipt
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Room, RoomStatus, Booking, Guest, DashboardStats, BookingStatus, RoomType, UserRole, Transaction, TransactionType, RoomService } from './types';
-import { MOCK_ROOMS, MOCK_BOOKINGS, MOCK_GUESTS } from './mockData';
+import { Room, RoomStatus, Booking, Guest, User, Branch, DashboardStats, BookingStatus, RoomType, UserRole, Transaction, TransactionType, RoomService } from './types';
+import { MOCK_ROOMS, MOCK_BOOKINGS, MOCK_GUESTS, MOCK_BRANCHES } from './mockData';
 
 type Tab = 'dashboard' | 'rooms' | 'bookings' | 'guests' | 'settings' | 'roomManagement' | 'ledger';
 
 export default function App() {
+  const SESSION_DURATION = 4 * 60 * 60 * 1000;
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
-  const [currentUser, setCurrentUser] = useState<UserRole>(UserRole.ADMIN);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [loggedInUser, setLoggedInUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('hotel_logged_in_user');
+    if (saved) return JSON.parse(saved) as User;
+    return null;
+  });
+  const [currentUser, setCurrentUser] = useState<UserRole>(() => {
+    const saved = localStorage.getItem('hotel_logged_in_user');
+    if (saved) {
+      const user = JSON.parse(saved) as User;
+      return user.role;
+    }
+    return UserRole.ADMIN;
+  });
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    const auth = localStorage.getItem('hotel_is_authenticated');
+    const timestamp = localStorage.getItem('hotel_login_timestamp');
+    if (auth === 'true' && timestamp) {
+      const elapsed = Date.now() - parseInt(timestamp, 10);
+      if (elapsed < SESSION_DURATION) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      const interval = setInterval(() => {
+        const timestamp = localStorage.getItem('hotel_login_timestamp');
+        if (timestamp) {
+          const elapsed = Date.now() - parseInt(timestamp, 10);
+          if (elapsed >= SESSION_DURATION) {
+            handleLogout();
+            alert('Phiên làm việc đã hết hạn (4 tiếng). Vui lòng đăng nhập lại.');
+          }
+        }
+      }, 60000); // Check every minute
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated]);
+  const [branches, setBranches] = useState<Branch[]>(() => {
+    const saved = localStorage.getItem('hotel_branches');
+    if (saved) return JSON.parse(saved);
+    return MOCK_BRANCHES;
+  });
+  
+  useEffect(() => {
+    localStorage.setItem('hotel_branches', JSON.stringify(branches));
+  }, [branches]);
+  
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null); // null means All Branches
   const [rooms, setRooms] = useState<Room[]>(MOCK_ROOMS);
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    // Login logic
-    if ((loginForm.username === 'admin' && loginForm.password === 'admin') || 
-        (loginForm.username === 'peajastr' && loginForm.password === 'nhiethuyet')) {
-      setCurrentUser(UserRole.ADMIN);
+    
+    const user = users.find(u => u.username === loginForm.username && u.password === loginForm.password);
+    
+    if (user) {
+      setCurrentUser(user.role);
+      setLoggedInUser(user);
       setIsAuthenticated(true);
-      setActiveTab('dashboard');
-      setLoginError('');
-    } else if (loginForm.username === 'staff' && loginForm.password === 'staff') {
-      setCurrentUser(UserRole.STAFF);
-      setIsAuthenticated(true);
-      setActiveTab('rooms');
+      localStorage.setItem('hotel_is_authenticated', 'true');
+      localStorage.setItem('hotel_login_timestamp', Date.now().toString());
+      localStorage.setItem('hotel_logged_in_user', JSON.stringify(user));
+      setActiveTab(user.role === UserRole.ADMIN ? 'dashboard' : 'rooms');
+      setAccountData(prev => ({
+        ...prev,
+        displayName: user.name
+      }));
       setLoginError('');
     } else {
       setLoginError('Tên đăng nhập hoặc mật khẩu không chính xác');
@@ -80,12 +135,18 @@ export default function App() {
 
   const handleLogout = () => {
     setIsAuthenticated(false);
+    setLoggedInUser(null);
+    localStorage.removeItem('hotel_is_authenticated');
+    localStorage.removeItem('hotel_login_timestamp');
+    localStorage.removeItem('hotel_logged_in_user');
     setLoginForm({ username: '', password: '' });
   };
   const [bookings, setBookings] = useState<Booking[]>(MOCK_BOOKINGS);
   const [guests, setGuests] = useState<Guest[]>(MOCK_GUESTS);
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [preSelectedRoomId, setPreSelectedRoomId] = useState<string | null>(null);
+  const [bookingDateState, setBookingDateState] = useState<string>(selectedDate);
+  const [isGuestArrived, setIsGuestArrived] = useState<boolean>(true);
   const [bookingCheckIn, setBookingCheckIn] = useState<string>(selectedDate);
   const [bookingCheckOut, setBookingCheckOut] = useState<string>('');
   const [guestSearch, setGuestSearch] = useState<string>('');
@@ -97,14 +158,18 @@ export default function App() {
   const [currentIdCard, setCurrentIdCard] = useState<string>('');
   const [showSearchResults, setShowSearchResults] = useState<boolean>(false);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+  const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
   const [isRoomModalOpen, setIsRoomModalOpen] = useState(false);
+  const [isCheckInConfirmModalOpen, setIsCheckInConfirmModalOpen] = useState(false);
+  const [checkInBooking, setCheckInBooking] = useState<Booking | null>(null);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [newRoomData, setNewRoomData] = useState<Partial<Room>>({
     number: '',
     type: RoomType.SINGLE,
     pricePerNight: 0,
     floor: 1,
-    status: RoomStatus.AVAILABLE
+    status: RoomStatus.AVAILABLE,
+    branchId: MOCK_BRANCHES[0].id
   });
   const [apiUrl, setApiUrl] = useState<string>(localStorage.getItem('hotel_api_url') || '');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -113,6 +178,36 @@ export default function App() {
     email: 'admin@hotel.com',
     currentPassword: '',
     newPassword: ''
+  });
+
+  const [users, setUsers] = useState<User[]>(() => {
+    const savedUsers = localStorage.getItem('hotel_users');
+    if (savedUsers) return JSON.parse(savedUsers);
+    return [
+      { id: 'u1', name: 'Admin', role: UserRole.ADMIN, username: 'admin', password: 'admin' },
+      { id: 'u2', name: 'Nhân viên 1', role: UserRole.STAFF, username: 'staff', password: 'staff' },
+      { id: 'u3', name: 'Peajastr', role: UserRole.ADMIN, username: 'peajastr', password: 'nhiethuyet' },
+    ];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('hotel_users', JSON.stringify(users));
+  }, [users]);
+
+  const [isAccountManagementModalOpen, setIsAccountManagementModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [newUserFormData, setNewUserFormData] = useState({
+    name: '',
+    username: '',
+    password: '',
+    role: UserRole.STAFF
+  });
+  
+  const [isBranchManagementModalOpen, setIsBranchManagementModalOpen] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+  const [newBranchFormData, setNewBranchFormData] = useState({
+    name: '',
+    address: ''
   });
 
   const handleSaveSettings = () => {
@@ -127,14 +222,14 @@ export default function App() {
   };
 
   const stats: DashboardStats = {
-    totalRooms: rooms.length,
-    occupiedRooms: rooms.filter(r => r.status === RoomStatus.OCCUPIED).length,
-    availableRooms: rooms.filter(r => r.status === RoomStatus.AVAILABLE).length,
-    bookedNotReceived: bookings.filter(b => b.status === BookingStatus.CONFIRMED).length,
-    expectedArrivals: bookings.filter(b => b.status === BookingStatus.CONFIRMED).length,
-    expectedDepartures: bookings.filter(b => b.status === BookingStatus.CHECKED_IN).length, // Placeholder logic
-    dailyRevenue: bookings.reduce((acc, b) => acc + (b.totalPrice || 0), 0) / 30, // Simplified mock
-    monthlyRevenue: bookings.reduce((acc, b) => acc + (b.totalPrice || 0), 0)
+    totalRooms: rooms.filter(r => !selectedBranchId || r.branchId === selectedBranchId).length,
+    occupiedRooms: rooms.filter(r => (!selectedBranchId || r.branchId === selectedBranchId) && r.status === RoomStatus.OCCUPIED).length,
+    availableRooms: rooms.filter(r => (!selectedBranchId || r.branchId === selectedBranchId) && r.status === RoomStatus.AVAILABLE).length,
+    bookedNotReceived: bookings.filter(b => (!selectedBranchId || b.branchId === selectedBranchId) && b.status === BookingStatus.CONFIRMED).length,
+    expectedArrivals: bookings.filter(b => (!selectedBranchId || b.branchId === selectedBranchId) && b.status === BookingStatus.CONFIRMED).length,
+    expectedDepartures: bookings.filter(b => (!selectedBranchId || b.branchId === selectedBranchId) && b.status === BookingStatus.CHECKED_IN).length,
+    dailyRevenue: bookings.filter(b => !selectedBranchId || b.branchId === selectedBranchId).reduce((acc, b) => acc + (b.totalPrice || 0), 0) / 30,
+    monthlyRevenue: bookings.filter(b => !selectedBranchId || b.branchId === selectedBranchId).reduce((acc, b) => acc + (b.totalPrice || 0), 0)
   };
 
   useEffect(() => {
@@ -152,6 +247,7 @@ export default function App() {
   const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
   const [isGuestDetailModalOpen, setIsGuestDetailModalOpen] = useState(false);
   const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+  const [serviceForm, setServiceForm] = useState<{name: string, price: number, quantity: number} | null>(null);
   const [availableServices] = useState([
     { name: 'Nước suối', price: 15000 },
     { name: 'Mì tôm', price: 20000 },
@@ -229,24 +325,42 @@ export default function App() {
     }
   };
 
-  const addServiceToBooking = (serviceName: string, price: number) => {
+  const addServiceToBooking = (serviceName: string, price: number, quantity: number) => {
     if (!selectedBookingDetails) return;
     
-    const newService: RoomService = {
-      id: `s${Date.now()}`,
-      name: serviceName,
-      price: price,
-      quantity: 1,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-
+    // Check if service already exists
+    const existingIndex = selectedBookingDetails.services?.findIndex(s => s.name === serviceName);
+    
+    let newServiceAmount = 0;
+    
     const updatedBookings = bookings.map(b => {
       if (b.id === selectedBookingDetails.id) {
-        const updatedServices = [...(b.services || []), newService];
+        let newServices = b.services ? [...b.services] : [];
+        if (existingIndex !== undefined && existingIndex >= 0) {
+          newServices[existingIndex] = {
+            ...newServices[existingIndex],
+            quantity: newServices[existingIndex].quantity + quantity,
+            price: price
+          };
+          // Just simplistic: price * quantity difference might be complex if price changes
+          // Here we just calculate the added value based on current addition
+          newServiceAmount = price * quantity;
+        } else {
+          const newService: RoomService = {
+            id: `s${Date.now()}`,
+            name: serviceName,
+            price: price,
+            quantity: quantity,
+            createdAt: new Date().toISOString().split('T')[0]
+          };
+          newServices.push(newService);
+          newServiceAmount = price * quantity;
+        }
+
         const updatedBooking = { 
           ...b, 
-          services: updatedServices,
-          totalPrice: b.totalPrice + price
+          services: newServices,
+          totalPrice: (b.totalPrice || 0) + newServiceAmount
         };
         setSelectedBookingDetails(updatedBooking);
         return updatedBooking;
@@ -257,7 +371,107 @@ export default function App() {
     setBookings(updatedBookings);
   };
 
-  const handleCreateBooking = () => {
+  const handleSaveUser = () => {
+    if (!newUserFormData.name || !newUserFormData.username) {
+      alert('Vui lòng điền đầy đủ tên và tên đăng nhập');
+      return;
+    }
+
+    if (editingUser) {
+      setUsers(users.map(u => u.id === editingUser.id ? { 
+        ...u, 
+        name: newUserFormData.name, 
+        username: newUserFormData.username, 
+        role: newUserFormData.role,
+        password: newUserFormData.password || u.password
+      } : u));
+    } else {
+      if (!newUserFormData.password) {
+        alert('Vui lòng nhập mật khẩu cho tài khoản mới');
+        return;
+      }
+      const newUser: User = {
+        id: `u${Date.now()}`,
+        name: newUserFormData.name,
+        username: newUserFormData.username,
+        role: newUserFormData.role,
+        password: newUserFormData.password
+      };
+      setUsers([...users, newUser]);
+    }
+    setIsAccountManagementModalOpen(false);
+    setEditingUser(null);
+    setNewUserFormData({ name: '', username: '', password: '', role: UserRole.STAFF });
+  };
+
+  const handleDeleteUser = (id: string) => {
+    if (confirm('Bạn có chắc chắn muốn xóa tài khoản này?')) {
+      setUsers(users.filter(u => u.id !== id));
+    }
+  };
+
+  const handleSaveBranch = () => {
+    if (!newBranchFormData.name || !newBranchFormData.address) {
+      alert('Vui lòng điền đầy đủ tên và địa chỉ cơ sở');
+      return;
+    }
+
+    if (editingBranch) {
+      setBranches(branches.map(b => b.id === editingBranch.id ? { 
+        ...b, 
+        name: newBranchFormData.name, 
+        address: newBranchFormData.address
+      } : b));
+    } else {
+      const newBranch: Branch = {
+        id: `br${Date.now()}`,
+        name: newBranchFormData.name,
+        address: newBranchFormData.address
+      };
+      setBranches([...branches, newBranch]);
+    }
+    setIsBranchManagementModalOpen(false);
+    setEditingBranch(null);
+    setNewBranchFormData({ name: '', address: '' });
+  };
+
+  const handleDeleteBranch = (id: string) => {
+    if (confirm('Bạn có chắc chắn muốn xóa cơ sở này? Sẽ ẩn đi các dữ liệu liên quan.')) {
+      setBranches(branches.filter(b => b.id !== id));
+    }
+  };
+
+  const handleUpdateBookingStatus = (bookingId: string, newStatus: BookingStatus) => {
+    setBookings(bookings.map(b => b.id === bookingId ? { ...b, status: newStatus } : b));
+    if (selectedBookingDetails && selectedBookingDetails.id === bookingId) {
+      setSelectedBookingDetails({ ...selectedBookingDetails, status: newStatus });
+    }
+    const booking = bookings.find(b => b.id === bookingId);
+    if (booking && newStatus === BookingStatus.CHECKED_OUT) {
+      setRooms(rooms.map(r => r.id === booking.roomId ? { ...r, status: RoomStatus.CLEANING } : r));
+    } else if (booking && newStatus === BookingStatus.CHECKED_IN) {
+      setRooms(rooms.map(r => r.id === booking.roomId ? { ...r, status: RoomStatus.OCCUPIED } : r));
+    }
+  };
+
+  const closeBookingModal = () => {
+    setIsBookingModalOpen(false);
+    setEditingBookingId(null);
+    setGuestSearch('');
+    setGuestEmail('');
+    setGuestPhone('');
+    setGuestAddress('');
+    setPaidAmount(0);
+    setGuestIdCards([]);
+    setCurrentIdCard('');
+    setPreSelectedRoomId(null);
+    setBookingCheckIn(selectedDate);
+    setBookingCheckOut('');
+    setBookingDateState(selectedDate);
+    setIsGuestArrived(true);
+  };
+
+  const handleSaveBooking = () => {
     if (!guestSearch || !guestPhone || !preSelectedRoomId) {
       alert('Vui lòng điền đầy đủ tên, số điện thoại và chọn phòng!');
       return;
@@ -280,45 +494,76 @@ export default function App() {
       };
       setGuests([...guests, newGuest]);
       currentGuestId = newGuest.id;
-    } else {
+    } else if (!editingBookingId) {
       setGuests(guests.map(g => g.id === existingGuest.id ? { ...g, totalBookings: g.totalBookings + 1, lastVisit: bookingCheckIn } : g));
     }
 
-    // 2. Create Booking
+    // 2. Create or Update Booking
     const selectedRoom = rooms.find(r => r.id === preSelectedRoomId);
-    const nights = Math.ceil((new Date(bookingCheckOut).getTime() - new Date(bookingCheckIn).getTime()) / (1000 * 3600 * 24)) || 1;
+    let nights = Math.ceil((new Date(bookingCheckOut || bookingCheckIn).getTime() - new Date(bookingCheckIn).getTime()) / (1000 * 3600 * 24));
+    if (nights < 1) nights = 1;
     
-    const newBooking: Booking = {
-      id: `b${Date.now()}`,
-      roomId: preSelectedRoomId,
-      guestName: guestSearch,
-      guestEmail: guestEmail,
-      guestPhone: guestPhone,
-      guestAddress: guestAddress,
-      checkIn: bookingCheckIn,
-      checkOut: bookingCheckOut,
-      status: BookingStatus.CONFIRMED,
-      totalPrice: (selectedRoom?.pricePerNight || 0) * nights,
-      paidAmount: paidAmount,
-      guestIdCards: guestIdCards,
-      guestsCount: guestIdCards.length > 0 ? guestIdCards.length : 1
-    };
+    if (editingBookingId) {
+      const existingBooking = bookings.find(b => b.id === editingBookingId);
+      if (existingBooking) {
+        const newStatus = isGuestArrived ? BookingStatus.CHECKED_IN : BookingStatus.CONFIRMED;
+        const updatedBooking: Booking = {
+          ...existingBooking,
+          roomId: preSelectedRoomId,
+          branchId: selectedRoom?.branchId || existingBooking.branchId,
+          guestName: guestSearch,
+          guestEmail: guestEmail,
+          guestPhone: guestPhone,
+          guestAddress: guestAddress,
+          checkIn: bookingCheckIn,
+          checkOut: bookingCheckOut || existingBooking.checkOut,
+          bookingDate: bookingDateState,
+          status: newStatus,
+          totalPrice: existingBooking.totalPrice, // User can manually edit total price through another UI if needed
+          paidAmount: paidAmount,
+          guestIdCards: guestIdCards,
+          guestsCount: guestIdCards.length > 0 ? guestIdCards.length : 1
+        };
+        setBookings(bookings.map(b => b.id === editingBookingId ? updatedBooking : b));
+        
+        // Update room status
+        if (newStatus === BookingStatus.CHECKED_IN) {
+          setRooms(rooms.map(r => r.id === preSelectedRoomId ? { ...r, status: RoomStatus.OCCUPIED } : r));
+        }
 
-    setBookings([newBooking, ...bookings]);
-    
-    // 3. Update Room status
-    setRooms(rooms.map(r => r.id === preSelectedRoomId ? { ...r, status: RoomStatus.OCCUPIED } : r));
+        if (selectedBookingDetails?.id === editingBookingId) {
+          setSelectedBookingDetails(updatedBooking);
+        }
+      }
+    } else {
+      const newStatus = isGuestArrived ? BookingStatus.CHECKED_IN : BookingStatus.CONFIRMED;
+      const newBooking: Booking = {
+        id: `b${Date.now()}`,
+        roomId: preSelectedRoomId,
+        branchId: selectedRoom?.branchId || '',
+        guestName: guestSearch,
+        guestEmail: guestEmail,
+        guestPhone: guestPhone,
+        guestAddress: guestAddress,
+        checkIn: bookingCheckIn,
+        checkOut: bookingCheckOut || bookingCheckIn,
+        bookingDate: bookingDateState,
+        status: newStatus,
+        totalPrice: (selectedRoom?.pricePerNight || 0) * nights,
+        paidAmount: paidAmount,
+        guestIdCards: guestIdCards,
+        guestsCount: guestIdCards.length > 0 ? guestIdCards.length : 1
+      };
+
+      setBookings([newBooking, ...bookings]);
+      // 3. Update Room status
+      if (newStatus === BookingStatus.CHECKED_IN) {
+        setRooms(rooms.map(r => r.id === preSelectedRoomId ? { ...r, status: RoomStatus.OCCUPIED } : r));
+      }
+    }
 
     // Reset and Close
-    setIsBookingModalOpen(false);
-    setGuestSearch('');
-    setGuestEmail('');
-    setGuestPhone('');
-    setGuestAddress('');
-    setPaidAmount(0);
-    setGuestIdCards([]);
-    setCurrentIdCard('');
-    setPreSelectedRoomId(null);
+    closeBookingModal();
   };
   
   const handleRoomAction = () => {
@@ -411,6 +656,8 @@ export default function App() {
   };
 
   const renderRoomManagement = () => {
+    const filteredRooms = rooms.filter(r => !selectedBranchId || r.branchId === selectedBranchId);
+    
     return (
       <div className="space-y-6 pb-20">
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
@@ -429,12 +676,15 @@ export default function App() {
         <div className="bg-white md:bg-transparent rounded-3xl md:rounded-none border-none md:border md:border-border-light overflow-hidden shadow-none md:shadow-sm">
           {/* Mobile Card View */}
           <div className="grid grid-cols-1 gap-4 md:hidden">
-            {rooms.map((room) => (
+            {filteredRooms.map((room) => (
               <div key={room.id} className="bg-white p-5 rounded-[28px] border border-slate-100 shadow-sm space-y-4">
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="text-lg font-black text-text-main">Phòng {room.number}</h3>
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{room.type} • Tầng {room.floor}</p>
+                    <p className="text-[10px] font-black text-primary uppercase tracking-widest mt-1">
+                      {branches.find(b => b.id === room.branchId)?.name.split('-')[1]?.trim()}
+                    </p>
                   </div>
                   <span className={`status-badge-modern ${
                     room.status === RoomStatus.AVAILABLE ? 'badge-available' : 
@@ -473,6 +723,7 @@ export default function App() {
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-slate-100">
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Cơ sở</th>
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Số phòng</th>
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Loại phòng</th>
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Tầng</th>
@@ -482,8 +733,13 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {rooms.map((room) => (
+                {filteredRooms.map((room) => (
                   <tr key={room.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <span className="text-[10px] font-black text-primary uppercase tracking-widest">
+                        {branches.find(b => b.id === room.branchId)?.name.split('-')[1]?.trim()}
+                      </span>
+                    </td>
                     <td className="px-6 py-4">
                       <span className="text-sm font-black text-text-main">Phòng {room.number}</span>
                     </td>
@@ -557,7 +813,7 @@ export default function App() {
   const translateStatus = (status: RoomStatus) => {
     switch (status) {
       case RoomStatus.AVAILABLE: return 'Sẵn sàng';
-      case RoomStatus.OCCUPIED: return 'Có khách';
+      case RoomStatus.OCCUPIED: return 'Khách đặt';
       case RoomStatus.CLEANING: return 'Đang dọn';
       case RoomStatus.MAINTENANCE: return 'Bảo trì';
       default: return status;
@@ -573,7 +829,12 @@ export default function App() {
     }
   };
 
-  const renderDashboard = () => (
+  const renderDashboard = () => {
+    const filteredBookings = bookings.filter(b => !selectedBranchId || b.branchId === selectedBranchId);
+    const filteredRooms = rooms.filter(r => !selectedBranchId || r.branchId === selectedBranchId);
+    const recentBookings = filteredBookings.slice(-4).reverse();
+
+    return (
     <div className="space-y-8 pb-20 lg:pb-0">
       <header className="border-b border-border-light pb-6 -mt-2">
         <h1 className="text-2xl font-bold text-text-main">Tổng quan</h1>
@@ -614,7 +875,7 @@ export default function App() {
             </button>
           </div>
           <div className="space-y-4">
-            {bookings.map((booking, i) => (
+            {recentBookings.map((booking, i) => (
               <div 
                 key={i} 
                 className="flex items-center justify-between p-4 rounded-xl hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100 cursor-pointer"
@@ -650,10 +911,10 @@ export default function App() {
           <h3 className="text-lg font-bold mb-6">Trạng thái phòng</h3>
           <div className="space-y-4">
             {[
-              { label: 'Sẵn sàng', count: rooms.filter(r => r.status === RoomStatus.AVAILABLE).length, color: 'bg-available' },
-              { label: 'Có khách', count: rooms.filter(r => r.status === RoomStatus.OCCUPIED).length, color: 'bg-occupied' },
-              { label: 'Đang dọn', count: rooms.filter(r => r.status === RoomStatus.CLEANING).length, color: 'bg-primary' },
-              { label: 'Bảo trì', count: rooms.filter(r => r.status === RoomStatus.MAINTENANCE).length, color: 'bg-maintenance' },
+              { label: 'Sẵn sàng', count: filteredRooms.filter(r => r.status === RoomStatus.AVAILABLE).length, color: 'bg-available' },
+              { label: 'Khách đặt', count: filteredRooms.filter(r => r.status === RoomStatus.OCCUPIED).length, color: 'bg-occupied' },
+              { label: 'Đang dọn', count: filteredRooms.filter(r => r.status === RoomStatus.CLEANING).length, color: 'bg-primary' },
+              { label: 'Bảo trì', count: filteredRooms.filter(r => r.status === RoomStatus.MAINTENANCE).length, color: 'bg-maintenance' },
             ].map((status, i) => (
               <div key={i} className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -680,11 +941,14 @@ export default function App() {
         </div>
       </div>
     </div>
-  );
+  ); };
 
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
 
-  const renderBookings = () => (
+  const renderBookings = () => {
+    const filteredBookings = bookings.filter(b => !selectedBranchId || b.branchId === selectedBranchId);
+    
+    return (
     <div className="space-y-8 pb-20 lg:pb-0">
       <header className="flex items-center justify-between border-b border-border-light pb-6 -mt-2">
         <div>
@@ -715,7 +979,7 @@ export default function App() {
               <span className={`status-badge-modern ${
                 booking.status === BookingStatus.CHECKED_IN ? 'badge-occupied' : 'badge-available'
               }`}>
-                {booking.status === BookingStatus.CHECKED_IN ? 'Đã nhận' : 'Chờ nhận'}
+                {booking.status === BookingStatus.CHECKED_IN ? 'Đã nhận phòng' : 'Đã đặt phòng'}
               </span>
             </div>
             
@@ -751,21 +1015,35 @@ export default function App() {
                   </span>
                 </div>
               </div>
-              <button 
-                onClick={() => {
-                  setSelectedBookingDetails(booking);
-                  setIsDetailModalOpen(true);
-                }}
-                className="flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
-              >
-                Chi tiết <ChevronRight size={14} />
-              </button>
+              <div className="flex items-center gap-3">
+                {booking.status === BookingStatus.CONFIRMED && (
+                  <button 
+                    onClick={() => {
+                      setCheckInBooking(booking);
+                      setIsCheckInConfirmModalOpen(true);
+                    }}
+                    className="bg-primary/10 text-primary hover:bg-primary hover:text-white px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1"
+                  >
+                    <CheckSquare size={12} />
+                    Nhận phòng
+                  </button>
+                )}
+                <button 
+                  onClick={() => {
+                    setSelectedBookingDetails(booking);
+                    setIsDetailModalOpen(true);
+                  }}
+                  className="flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
+                >
+                  Chi tiết <ChevronRight size={14} />
+                </button>
+              </div>
             </div>
           </div>
         ))}
       </div>
     </div>
-  );
+  ); };
 
   const renderGuests = () => (
     <div className="space-y-8 pb-32 lg:pb-0">
@@ -839,8 +1117,9 @@ export default function App() {
   );
 
   const renderLedger = () => {
-    const totalIncome = transactions.filter(t => t.type === TransactionType.INCOME).reduce((acc, t) => acc + t.amount, 0);
-    const totalExpense = transactions.filter(t => t.type === TransactionType.EXPENSE).reduce((acc, t) => acc + t.amount, 0);
+    const filteredTransactions = transactions.filter(t => !selectedBranchId || t.branchId === selectedBranchId);
+    const totalIncome = filteredTransactions.filter(t => t.type === TransactionType.INCOME).reduce((acc, t) => acc + t.amount, 0);
+    const totalExpense = filteredTransactions.filter(t => t.type === TransactionType.EXPENSE).reduce((acc, t) => acc + t.amount, 0);
     const balance = totalIncome - totalExpense;
 
     return (
@@ -874,7 +1153,7 @@ export default function App() {
         </div>
 
         <div className="md:hidden space-y-4">
-          {transactions.map((t) => (
+          {filteredTransactions.map((t) => (
             <div key={t.id} className="bg-white border border-border-light rounded-[32px] p-6 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t.date}</span>
@@ -934,7 +1213,7 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {transactions.map((t) => (
+                {filteredTransactions.map((t) => (
                   <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4 text-xs font-bold text-slate-500">{t.date}</td>
                     <td className="px-6 py-4">
@@ -1007,12 +1286,12 @@ export default function App() {
       {/* Profile Section */}
       <div className="bg-white px-4 py-6 mb-2 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-white text-3xl font-black shadow-lg shadow-primary/20">
-            {accountData.displayName.charAt(0)}
+          <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-white text-3xl font-black shadow-lg shadow-primary/20 uppercase">
+            {loggedInUser?.name.charAt(0) || accountData.displayName.charAt(0)}
           </div>
           <div>
-            <h2 className="text-xl font-bold text-slate-900">{accountData.displayName}</h2>
-            <p className="text-sm font-medium text-slate-400 capitalize">{currentUser.toLowerCase()}</p>
+            <h2 className="text-xl font-bold text-slate-900">{loggedInUser?.name || accountData.displayName}</h2>
+            <p className="text-sm font-medium text-slate-400 capitalize">@{loggedInUser?.username || currentUser.toLowerCase()}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -1063,7 +1342,10 @@ export default function App() {
       <div className="bg-white px-5 py-6 mb-2 border-b border-slate-100">
         <h3 className="text-xl font-black text-slate-800 mb-6 tracking-tight">Nhân sự & Tài khoản</h3>
         <div className="grid grid-cols-2 gap-x-2 gap-y-4">
-          <button className="flex items-center gap-4 p-2 hover:bg-slate-50 rounded-xl transition-colors text-left">
+          <button 
+            onClick={() => setIsAccountManagementModalOpen(true)}
+            className="flex items-center gap-4 p-2 hover:bg-slate-50 rounded-xl transition-colors text-left"
+          >
             <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0">
               <UserCog size={24} />
             </div>
@@ -1090,9 +1372,20 @@ export default function App() {
         </div>
       </div>
 
-      {/* Custom Admin Config (Existing Features) */}
+      {/* System Section */}
       <div className="bg-white px-5 py-6 mb-2 border-b border-slate-100">
         <h3 className="text-xl font-black text-slate-800 mb-6 tracking-tight">Hệ thống</h3>
+        <div className="grid grid-cols-2 gap-x-2 gap-y-4 mb-6">
+          <button 
+            onClick={() => setIsBranchManagementModalOpen(true)}
+            className="flex items-center gap-4 p-2 hover:bg-slate-50 rounded-xl transition-colors text-left"
+          >
+            <div className="w-12 h-12 bg-sky-50 text-sky-600 rounded-2xl flex items-center justify-center shrink-0">
+              <Database size={24} />
+            </div>
+            <span className="text-base font-bold text-slate-700">Quản lý cơ sở</span>
+          </button>
+        </div>
         <div className="space-y-6">
           <div className="bg-slate-50 p-6 rounded-[24px] border border-slate-100">
             <div className="flex items-center gap-2 mb-4">
@@ -1131,6 +1424,7 @@ export default function App() {
 
   const renderRooms = () => {
     const isToday = selectedDate === new Date().toISOString().split('T')[0];
+    const filteredRooms = rooms.filter(r => !selectedBranchId || r.branchId === selectedBranchId);
 
     return (
       <div className="space-y-8 pb-20 lg:pb-0">
@@ -1184,26 +1478,21 @@ export default function App() {
             let displayStatus = room.status;
             let currentBooking: Booking | undefined = undefined;
             
-            if (!isToday) {
-              currentBooking = bookings.find(b => 
-                b.roomId === room.id && 
-                selectedDate >= b.checkIn && 
-                selectedDate < b.checkOut
-              );
-              
-              if (currentBooking) {
-                displayStatus = RoomStatus.OCCUPIED;
-              } else if (room.status === RoomStatus.MAINTENANCE) {
+            currentBooking = bookings.find(b => 
+              b.roomId === room.id && 
+              selectedDate >= b.checkIn && 
+              selectedDate <= b.checkOut &&
+              (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.CHECKED_IN)
+            );
+            
+            if (currentBooking) {
+              displayStatus = RoomStatus.OCCUPIED;
+            } else if (!isToday) {
+              if (room.status === RoomStatus.MAINTENANCE) {
                 displayStatus = RoomStatus.MAINTENANCE;
               } else {
                 displayStatus = RoomStatus.AVAILABLE;
               }
-            } else if (displayStatus === RoomStatus.OCCUPIED) {
-              currentBooking = bookings.find(b => 
-                b.roomId === room.id && 
-                selectedDate >= b.checkIn && 
-                selectedDate < b.checkOut
-              );
             }
 
             return (
@@ -1212,7 +1501,7 @@ export default function App() {
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: i * 0.02 }}
-                className={`room-card-modern ${displayStatus === RoomStatus.OCCUPIED ? 'border-l-4 border-l-occupied' : ''} ${displayStatus === RoomStatus.AVAILABLE ? 'hover:border-primary active:scale-95' : 'cursor-default opacity-80'}`}
+                className={`room-card-modern ${displayStatus === RoomStatus.OCCUPIED ? 'border-l-4 border-l-occupied hover:border-l-primary hover:shadow-md cursor-pointer active:scale-95' : ''} ${displayStatus === RoomStatus.AVAILABLE ? 'hover:border-primary cursor-pointer active:scale-95' : 'cursor-default opacity-80'}`}
                 onClick={() => {
                   if (displayStatus === RoomStatus.AVAILABLE) {
                     setPreSelectedRoomId(room.id);
@@ -1221,16 +1510,9 @@ export default function App() {
                     nextDay.setDate(nextDay.getDate() + 1);
                     setBookingCheckOut(nextDay.toISOString().split('T')[0]);
                     setIsBookingModalOpen(true);
-                  } else if (displayStatus === RoomStatus.OCCUPIED) {
-                    const booking = bookings.find(b => 
-                      b.roomId === room.id && 
-                      selectedDate >= b.checkIn && 
-                      selectedDate < b.checkOut
-                    );
-                    if (booking) {
-                      setSelectedBookingDetails(booking);
-                      setIsDetailModalOpen(true);
-                    }
+                  } else if (displayStatus === RoomStatus.OCCUPIED && currentBooking) {
+                    setSelectedBookingDetails(currentBooking);
+                    setIsDetailModalOpen(true);
                   }
                 }}
               >
@@ -1240,26 +1522,97 @@ export default function App() {
                     <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-tight">{translateRoomType(room.type)}</p>
                   </div>
                   <div className={`status-badge-modern ${getStatusColor(displayStatus)}`}>
-                    {translateStatus(displayStatus)}
+                    {displayStatus === RoomStatus.OCCUPIED && currentBooking 
+                      ? (currentBooking.status === BookingStatus.CONFIRMED ? 'Khách đặt' : 'Đã nhận phòng') 
+                      : translateStatus(displayStatus)}
                   </div>
                 </div>
 
                 {displayStatus === RoomStatus.OCCUPIED && currentBooking && (
-                  <div className="mt-2 text-[11px] bg-slate-50 p-2 rounded-xl border border-slate-100/50">
-                    <div className="font-bold text-text-main truncate mb-0.5">{currentBooking.guestName}</div>
-                    <div className="text-primary font-black flex items-center gap-1">
-                      <div className="w-1 h-1 rounded-full bg-primary/40"></div>
-                      Tới: {currentBooking.checkOut}
+                  <div className="mt-2 space-y-2">
+                    <div className="text-[11px] bg-slate-50 p-2 rounded-xl border border-slate-100/50">
+                      <div className="font-bold text-text-main truncate mb-0.5">{currentBooking.guestName}</div>
+                      <div className="text-primary font-black flex items-center gap-1">
+                        <div className="w-1 h-1 rounded-full bg-primary/40"></div>
+                        Tới: {currentBooking.checkOut}
+                      </div>
                     </div>
                   </div>
                 )}
 
-                <div className="mt-auto flex items-end justify-between border-t border-slate-50 pt-3">
-                  <div>
-                    <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest leading-none mb-1">Giá</p>
-                    <span className="text-sm font-bold text-text-main">{formatCurrency(room.pricePerNight)}</span>
+                <div className="mt-auto pt-3 border-t border-slate-50 flex flex-col gap-2">
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest leading-none mb-1">Giá</p>
+                      <span className="text-sm font-bold text-text-main">{formatCurrency(room.pricePerNight)}</span>
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-300">Tầng {room.floor}</span>
                   </div>
-                  <span className="text-[10px] font-bold text-slate-300">Tầng {room.floor}</span>
+
+                  {displayStatus === RoomStatus.AVAILABLE && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPreSelectedRoomId(room.id);
+                        setBookingCheckIn(selectedDate);
+                        const nextDay = new Date(selectedDate);
+                        nextDay.setDate(nextDay.getDate() + 1);
+                        setBookingCheckOut(nextDay.toISOString().split('T')[0]);
+                        setIsGuestArrived(true);
+                        setIsBookingModalOpen(true);
+                      }}
+                      className="w-full mt-1 py-2 bg-slate-100 text-primary hover:bg-primary/20 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
+                    >
+                      Nhận Khách
+                    </button>
+                  )}
+
+                  {displayStatus === RoomStatus.OCCUPIED && currentBooking?.status === BookingStatus.CONFIRMED && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCheckInBooking(currentBooking);
+                        setIsCheckInConfirmModalOpen(true);
+                      }}
+                      className="w-full mt-1 py-2 bg-primary text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:opacity-90 shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <CheckSquare size={12} /> Nhận phòng
+                    </button>
+                  )}
+
+                  {displayStatus === RoomStatus.OCCUPIED && (!currentBooking || currentBooking.status === BookingStatus.CHECKED_IN) && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (currentBooking) {
+                          setSelectedBookingDetails(currentBooking);
+                          setIsDetailModalOpen(true);
+                        } else {
+                          const nextDay = new Date(selectedDate);
+                          nextDay.setDate(nextDay.getDate() + 1);
+                          const dummyBooking: Booking = {
+                            id: `b${Date.now()}`,
+                            roomId: room.id,
+                            branchId: room.branchId,
+                            guestName: '',
+                            guestEmail: '',
+                            guestPhone: '',
+                            checkIn: selectedDate,
+                            checkOut: nextDay.toISOString().split('T')[0],
+                            status: BookingStatus.CONFIRMED,
+                            totalPrice: room.pricePerNight,
+                            paidAmount: 0,
+                            guestsCount: 1,
+                          };
+                          setCheckInBooking(dummyBooking);
+                          setIsCheckInConfirmModalOpen(true);
+                        }
+                      }}
+                      className={`w-full mt-1 py-2 ${currentBooking ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-primary text-white hover:opacity-90 shadow-lg shadow-primary/20'} text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5`}
+                    >
+                      {currentBooking ? 'Xem & Trả phòng' : <><CheckSquare size={12} /> Nhận phòng</>}
+                    </button>
+                  )}
                 </div>
               </motion.div>
             );
@@ -1356,7 +1709,7 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm hidden md:block"
-              onClick={() => setIsBookingModalOpen(false)}
+              onClick={closeBookingModal}
             />
             <motion.div 
               initial={{ opacity: 0, scale: 0.98, y: 10 }}
@@ -1367,11 +1720,11 @@ export default function App() {
               <div className="p-6 md:p-8 space-y-6">
                 <header className="flex justify-between items-center sticky top-0 bg-white/80 backdrop-blur-md z-10 -mx-6 md:-mx-8 px-6 md:px-8 py-2 md:py-0">
                   <div>
-                    <h3 className="text-xl font-black text-text-main uppercase tracking-tight">Tạo đặt phòng mới</h3>
+                    <h3 className="text-xl font-black text-text-main uppercase tracking-tight">{editingBookingId ? 'Cập nhật đặt phòng' : 'Tạo đặt phòng mới'}</h3>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-1">Ghi chú thông tin khách hàng và lịch trình</p>
                   </div>
                   <button 
-                    onClick={() => setIsBookingModalOpen(false)}
+                    onClick={closeBookingModal}
                     className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
                   >
                     <Plus size={24} className="rotate-45" />
@@ -1522,7 +1875,16 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Ngày đặt</label>
+                      <input 
+                        type="date" 
+                        value={bookingDateState}
+                        onChange={(e) => setBookingDateState(e.target.value)}
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                      />
+                    </div>
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Ngày nhận phòng</label>
                       <input 
@@ -1543,13 +1905,24 @@ export default function App() {
                     </div>
                   </div>
 
+                  <div className="flex items-center gap-3 p-4 bg-slate-50 border border-slate-100 rounded-2xl cursor-pointer" onClick={() => setIsGuestArrived(!isGuestArrived)}>
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${isGuestArrived ? 'bg-primary text-white' : 'bg-white border border-slate-200 text-slate-400'}`}>
+                      <CheckSquare size={16} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-text-main">Khách đã đến nhận phòng</p>
+                      <p className="text-[10px] font-bold text-slate-400">Nếu bỏ chọn, đặt phòng sẽ lưu ở trạng thái "Đã đặt"</p>
+                    </div>
+                  </div>
+
                   <div className="p-6 bg-slate-900 rounded-[32px] space-y-4 shadow-xl">
                     <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
                       <span>Tổng tiền dự kiến</span>
                       <span className="text-white text-base">
                         {(() => {
                           const room = rooms.find(r => r.id === preSelectedRoomId);
-                          const nights = Math.ceil((new Date(bookingCheckOut).getTime() - new Date(bookingCheckIn).getTime()) / (1000 * 3600 * 24)) || 1;
+                          let nights = Math.ceil((new Date(bookingCheckOut || bookingCheckIn).getTime() - new Date(bookingCheckIn).getTime()) / (1000 * 3600 * 24));
+                          if (nights < 1) nights = 1;
                           return formatCurrency((room?.pricePerNight || 0) * nights);
                         })()}
                       </span>
@@ -1572,16 +1945,16 @@ export default function App() {
 
                 <div className="pt-6 sticky bottom-0 bg-white/80 backdrop-blur-md -mx-6 md:-mx-8 px-6 md:px-8 pb-4 flex flex-col md:flex-row gap-4">
                   <button 
-                    onClick={() => setIsBookingModalOpen(false)}
+                    onClick={closeBookingModal}
                     className="flex-1 py-4 bg-slate-100 text-slate-400 rounded-2xl font-black text-xs uppercase tracking-widest border border-slate-200 hover:bg-slate-200 transition-all active:scale-95"
                   >
                     Hủy bỏ
                   </button>
                   <button 
-                    onClick={handleCreateBooking}
+                    onClick={handleSaveBooking}
                     className="flex-[2] py-4 bg-primary text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-primary/20 hover:opacity-90 transition-all active:scale-95"
                   >
-                    Xác nhận đặt phòng
+                    {editingBookingId ? 'Cập nhật' : 'Xác nhận đặt phòng'}
                   </button>
                 </div>
               </div>
@@ -1609,7 +1982,31 @@ export default function App() {
               <div className="p-6 md:p-8 space-y-6">
                 <div className="flex justify-between items-center sticky top-0 bg-white/80 backdrop-blur-md z-10 -mx-6 md:-mx-8 px-6 md:px-8 py-2 md:py-0">
                   <div>
-                    <h3 className="text-xl font-black text-text-main">Chi tiết đặt phòng</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xl font-black text-text-main">Chi tiết đặt phòng</h3>
+                      <button 
+                        onClick={() => {
+                          setEditingBookingId(selectedBookingDetails.id);
+                          setGuestSearch(selectedBookingDetails.guestName);
+                          setGuestPhone(selectedBookingDetails.guestPhone);
+                          setGuestEmail(selectedBookingDetails.guestEmail);
+                          setGuestAddress(selectedBookingDetails.guestAddress || '');
+                          setPreSelectedRoomId(selectedBookingDetails.roomId);
+                          setBookingCheckIn(selectedBookingDetails.checkIn);
+                          setBookingCheckOut(selectedBookingDetails.checkOut);
+                          setBookingDateState(selectedBookingDetails.bookingDate || new Date().toISOString().split('T')[0]);
+                          setIsGuestArrived(selectedBookingDetails.status === BookingStatus.CHECKED_IN);
+                          setPaidAmount(selectedBookingDetails.paidAmount);
+                          setGuestIdCards(selectedBookingDetails.guestIdCards || []);
+                          setIsDetailModalOpen(false);
+                          setIsBookingModalOpen(true);
+                        }}
+                        className="flex items-center gap-1.5 text-primary bg-primary/5 hover:bg-primary/10 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold"
+                        title="Sửa đặt phòng"
+                      >
+                        <Edit size={14} /> Sửa thông tin
+                      </button>
+                    </div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mã đặt phòng #{selectedBookingDetails.id}</p>
                   </div>
                   <div className="flex items-center gap-3">
@@ -1686,9 +2083,23 @@ export default function App() {
 
                   <div className="flex justify-between items-center px-4 py-4 bg-slate-50 rounded-3xl border border-slate-100">
                     <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Trạng thái</span>
-                    <span className={`status-badge-modern ${selectedBookingDetails.status === BookingStatus.CHECKED_IN ? 'badge-occupied' : 'bg-slate-200 text-slate-600'}`}>
-                      {selectedBookingDetails.status === BookingStatus.CHECKED_IN ? 'Đang lưu trú' : 'Đã xác nhận'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`status-badge-modern ${selectedBookingDetails.status === BookingStatus.CHECKED_IN ? 'badge-occupied' : 'bg-slate-200 text-slate-600'}`}>
+                        {selectedBookingDetails.status === BookingStatus.CHECKED_IN ? 'Đã nhận phòng' : 'Đã đặt phòng'}
+                      </span>
+                      {selectedBookingDetails.status === BookingStatus.CONFIRMED && (
+                        <button 
+                          onClick={() => {
+                            setCheckInBooking(selectedBookingDetails);
+                            setIsCheckInConfirmModalOpen(true);
+                          }}
+                          className="bg-primary/10 text-primary hover:bg-primary hover:text-white px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1"
+                        >
+                          <CheckSquare size={12} />
+                          Nhận phòng
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {selectedBookingDetails.status === BookingStatus.CHECKED_IN && (
@@ -1734,6 +2145,123 @@ export default function App() {
                     Đóng cửa sổ
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isCheckInConfirmModalOpen && checkInBooking && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              onClick={() => setIsCheckInConfirmModalOpen(false)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[40px] shadow-2xl overflow-hidden p-8 border border-border-light"
+            >
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 bg-primary/10 text-primary rounded-3xl flex items-center justify-center mx-auto mb-4">
+                  <CheckSquare size={32} />
+                </div>
+                <h3 className="text-xl font-black text-text-main uppercase tracking-tight">Xác nhận nhận phòng</h3>
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mt-1">Vui lòng kiểm tra lại thông tin khách hàng</p>
+              </div>
+
+              <div className="space-y-4 mb-8">
+                <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100 grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1 block">Tên khách</label>
+                    <input 
+                      type="text" 
+                      value={checkInBooking.guestName}
+                      onChange={(e) => setCheckInBooking({ ...checkInBooking, guestName: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-text-main outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1 block">Số điện thoại</label>
+                    <input 
+                      type="text" 
+                      value={checkInBooking.guestPhone}
+                      onChange={(e) => setCheckInBooking({ ...checkInBooking, guestPhone: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-text-main outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1 block text-right">Phòng</label>
+                    <div className="text-right mt-2 text-lg font-black text-primary">#{rooms.find(r => r.id === checkInBooking.roomId)?.number}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1 block">Ngày vào</label>
+                    <input 
+                      type="date" 
+                      value={checkInBooking.checkIn}
+                      onChange={(e) => setCheckInBooking({ ...checkInBooking, checkIn: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-text-main outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1 block">Ngày ra</label>
+                    <input 
+                      type="date" 
+                      value={checkInBooking.checkOut}
+                      onChange={(e) => setCheckInBooking({ ...checkInBooking, checkOut: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-text-main outline-none focus:border-primary"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-primary/5 p-4 rounded-3xl border border-primary/10 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-500">Số tiền:</span>
+                  <div className="flex items-center gap-1">
+                    <input 
+                      type="number" 
+                      value={checkInBooking.totalPrice}
+                      onChange={(e) => setCheckInBooking({ ...checkInBooking, totalPrice: Number(e.target.value) })}
+                      className="w-32 bg-white border border-primary/20 rounded-xl px-3 py-2 text-lg font-black text-primary outline-none focus:border-primary text-right"
+                    />
+                    <span className="text-lg font-black text-primary">₫</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setIsCheckInConfirmModalOpen(false)}
+                  className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all"
+                >
+                  Hủy
+                </button>
+                <button 
+                  onClick={() => {
+                    const finalBooking = { ...checkInBooking, status: BookingStatus.CHECKED_IN };
+                    if (bookings.some(b => b.id === checkInBooking.id)) {
+                      setBookings(bookings.map(b => b.id === checkInBooking.id ? finalBooking : b));
+                    } else {
+                      setBookings([...bookings, finalBooking]);
+                    }
+                    setRooms(rooms.map(r => r.id === checkInBooking.roomId ? { ...r, status: RoomStatus.OCCUPIED } : r));
+                    if (selectedBookingDetails && selectedBookingDetails.id === checkInBooking.id) {
+                      setSelectedBookingDetails(finalBooking);
+                    }
+                    setIsCheckInConfirmModalOpen(false);
+                    setIsDetailModalOpen(false);
+                  }}
+                  className="flex-[2] py-4 bg-primary text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-primary/20 hover:opacity-90 transition-all active:scale-95"
+                >
+                  Xác nhận nhận phòng
+                </button>
               </div>
             </motion.div>
           </div>
@@ -1945,7 +2473,7 @@ export default function App() {
         <div className="p-8 mb-4">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-white font-black text-lg">H</div>
-            <span className="text-lg font-black text-primary tracking-tighter uppercase leading-none">HARMONY</span>
+            <span className="text-lg font-black text-primary tracking-tighter uppercase leading-none">DIGITEL</span>
           </div>
         </div>
 
@@ -2001,11 +2529,11 @@ export default function App() {
               </button>
             </div>
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-400">
-                {currentUser === UserRole.ADMIN ? 'AD' : 'ST'}
+              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase">
+                {loggedInUser?.name.charAt(0) || (currentUser === UserRole.ADMIN ? 'AD' : 'ST')}
               </div>
               <div>
-                <p className="text-xs font-bold text-text-main">{currentUser === UserRole.ADMIN ? 'Quản trị viên' : 'Nhân viên'}</p>
+                <p className="text-xs font-bold text-text-main">{loggedInUser?.name || (currentUser === UserRole.ADMIN ? 'Quản trị viên' : 'Nhân viên')}</p>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-available"></div>
                   <p className="text-[10px] text-available font-bold uppercase tracking-widest">Đang trực</p>
@@ -2052,6 +2580,43 @@ export default function App() {
       </nav>
 
       <main className="flex-1 p-6 lg:p-10 overflow-y-auto w-full max-w-full">
+        {/* Branch Selector Header */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between mb-8 gap-6 pt-2">
+          <div>
+             <h1 className="text-3xl font-black text-text-main tracking-tighter uppercase">
+               {activeTab === 'dashboard' ? 'Báo cáo tổng quan' : 
+                activeTab === 'rooms' ? 'Sơ đồ phòng thực tế' :
+                activeTab === 'roomManagement' ? 'Quản lý danh mục phòng' :
+                activeTab === 'bookings' ? 'Danh sách đặt phòng' :
+                activeTab === 'guests' ? 'Hồ sơ khách hàng' : 
+                activeTab === 'ledger' ? 'Sổ thu chi' : 'Cài đặt hệ thống'}
+             </h1>
+             <p className="text-slate-400 text-xs font-black uppercase tracking-widest mt-1">
+               {selectedBranchId 
+                 ? branches.find(b => b.id === selectedBranchId)?.name 
+                 : 'Tất cả các cơ sở trong hệ thống'}
+             </p>
+          </div>
+
+          <div className="flex items-center gap-2 bg-white p-2 rounded-[24px] border border-slate-100 shadow-sm">
+            <button 
+              onClick={() => setSelectedBranchId(null)}
+              className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${!selectedBranchId ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'text-slate-400 hover:bg-slate-50'}`}
+            >
+              Tổng thể
+            </button>
+            {branches.map(branch => (
+              <button 
+                key={branch.id}
+                onClick={() => setSelectedBranchId(branch.id)}
+                className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${selectedBranchId === branch.id ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'text-slate-400 hover:bg-slate-50'}`}
+              >
+                {branch.name.split('-')[1]?.trim() || branch.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <header className="flex justify-between items-center mb-8 gap-4">
           <div className="lg:hidden flex items-center bg-slate-100 rounded-full p-1 border border-slate-200">
             <button 
@@ -2172,6 +2737,19 @@ export default function App() {
                       value={newRoomData.pricePerNight}
                       onChange={(e) => setNewRoomData({...newRoomData, pricePerNight: Number(e.target.value)})}
                     />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Cơ sở vận hành</label>
+                    <select 
+                      className="w-full px-4 py-3 bg-slate-50 border border-border-light rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary appearance-none transition-all"
+                      value={newRoomData.branchId}
+                      onChange={(e) => setNewRoomData({...newRoomData, branchId: e.target.value})}
+                    >
+                      {branches.map(branch => (
+                        <option key={branch.id} value={branch.id}>{branch.name}</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="space-y-1">
@@ -2335,6 +2913,319 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {isBranchManagementModalOpen && (
+          <div className="fixed inset-0 z-[120] flex items-stretch md:items-center justify-center md:p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm hidden md:block"
+              onClick={() => {
+                setIsBranchManagementModalOpen(false);
+                setEditingBranch(null);
+                setNewBranchFormData({ name: '', address: '' });
+              }}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.98, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.98, y: 20 }}
+              className="relative w-full h-full lg:h-auto md:max-h-[90vh] md:max-w-2xl bg-white md:rounded-[40px] shadow-2xl overflow-y-auto custom-scrollbar md:border border-border-light flex flex-col"
+            >
+              <div className="p-6 md:p-8 space-y-6 flex-1">
+                <header className="flex justify-between items-center sticky top-0 bg-white/80 backdrop-blur-md z-10 -mx-6 md:-mx-8 px-6 md:px-8 py-2 md:py-0">
+                  <div>
+                    <h3 className="text-xl font-black text-text-main uppercase tracking-tight">Quản lý cơ sở</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Hệ thống khách sạn & chi nhánh</p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setIsBranchManagementModalOpen(false);
+                      setEditingBranch(null);
+                      setNewBranchFormData({ name: '', address: '' });
+                    }}
+                    className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+                  >
+                    <Plus size={24} className="rotate-45" />
+                  </button>
+                </header>
+
+                <div className="space-y-8">
+                  {/* List Branches */}
+                  <div className="space-y-3">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Danh sách cơ sở ({branches.length})</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {branches.map((branch) => (
+                        <div key={branch.id} className="p-4 bg-slate-50 border border-slate-100 rounded-3xl flex items-center justify-between group hover:border-primary transition-all">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-sm shadow-sm bg-sky-500`}>
+                              {branch.name.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="text-sm font-black text-text-main line-clamp-1">{branch.name}</p>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight line-clamp-1">{branch.address}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => {
+                                setEditingBranch(branch);
+                                setNewBranchFormData({
+                                  name: branch.name,
+                                  address: branch.address
+                                });
+                              }}
+                              className="p-2 text-slate-400 hover:text-primary transition-colors hover:bg-white rounded-lg"
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteBranch(branch.id)}
+                              className="p-2 text-slate-400 hover:text-rose-500 transition-colors hover:bg-white rounded-lg"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Add/Edit Form */}
+                  <div className="p-6 bg-slate-50 border border-slate-100 rounded-[32px] space-y-4">
+                    <h4 className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
+                       {editingBranch ? 'Chỉnh sửa cơ sở' : '+ Thêm cơ sở mới'}
+                    </h4>
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên cơ sở</label>
+                        <input 
+                          className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                          placeholder="Digitel Cơ sở 1..." 
+                          value={newBranchFormData.name}
+                          onChange={(e) => setNewBranchFormData({...newBranchFormData, name: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Địa chỉ</label>
+                        <input 
+                          className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                          placeholder="123 Đường ABC..." 
+                          value={newBranchFormData.address}
+                          onChange={(e) => setNewBranchFormData({...newBranchFormData, address: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="pt-2 flex gap-3">
+                      {editingBranch && (
+                        <button 
+                          onClick={() => {
+                            setEditingBranch(null);
+                            setNewBranchFormData({ name: '', address: '' });
+                          }}
+                          className="flex-1 py-3.5 bg-slate-200 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-300 transition-all"
+                        >
+                          Hủy sửa
+                        </button>
+                      )}
+                      <button 
+                        onClick={handleSaveBranch}
+                        className="flex-[2] py-3.5 bg-primary text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-primary/20 hover:opacity-90 transition-all"
+                      >
+                        {editingBranch ? 'Lưu thay đổi' : 'Tạo mới'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row gap-4">
+                <button 
+                  onClick={() => {
+                    setIsBranchManagementModalOpen(false);
+                    setEditingBranch(null);
+                    setNewBranchFormData({ name: '', address: '' });
+                  }}
+                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95 shadow-xl shadow-slate-900/20"
+                >
+                  Đóng
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isAccountManagementModalOpen && (
+          <div className="fixed inset-0 z-[120] flex items-stretch md:items-center justify-center md:p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm hidden md:block"
+              onClick={() => {
+                setIsAccountManagementModalOpen(false);
+                setEditingUser(null);
+                setNewUserFormData({ name: '', username: '', password: '', role: UserRole.STAFF });
+              }}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.98, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.98, y: 20 }}
+              className="relative w-full h-full lg:h-auto md:max-h-[90vh] md:max-w-2xl bg-white md:rounded-[40px] shadow-2xl overflow-y-auto custom-scrollbar md:border border-border-light flex flex-col"
+            >
+              <div className="p-6 md:p-8 space-y-6 flex-1">
+                <header className="flex justify-between items-center sticky top-0 bg-white/80 backdrop-blur-md z-10 -mx-6 md:-mx-8 px-6 md:px-8 py-2 md:py-0">
+                  <div>
+                    <h3 className="text-xl font-black text-text-main uppercase tracking-tight">Quản lý tài khoản</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Danh sách nhân sự & quyền hạn</p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setIsAccountManagementModalOpen(false);
+                      setEditingUser(null);
+                      setNewUserFormData({ name: '', username: '', password: '', role: UserRole.STAFF });
+                    }}
+                    className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+                  >
+                    <Plus size={24} className="rotate-45" />
+                  </button>
+                </header>
+
+                <div className="space-y-8">
+                  {/* List Users */}
+                  <div className="space-y-3">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Danh sách tài khoản ({users.length})</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {users.map((user) => (
+                        <div key={user.id} className="p-4 bg-slate-50 border border-slate-100 rounded-3xl flex items-center justify-between group hover:border-primary transition-all">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-sm shadow-sm ${user.role === UserRole.ADMIN ? 'bg-indigo-500' : 'bg-emerald-500'}`}>
+                              {user.name.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="text-sm font-black text-text-main">{user.name}</p>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">@{user.username} • {user.role === UserRole.ADMIN ? 'Quản trị' : 'Nhân viên'}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => {
+                                setEditingUser(user);
+                                setNewUserFormData({
+                                  name: user.name,
+                                  username: user.username,
+                                  password: '',
+                                  role: user.role
+                                });
+                              }}
+                              className="p-2 text-slate-400 hover:text-primary transition-colors hover:bg-white rounded-lg"
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteUser(user.id)}
+                              className="p-2 text-slate-400 hover:text-rose-500 transition-colors hover:bg-white rounded-lg"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Add/Edit Form */}
+                  <div className="p-6 bg-slate-50 border border-slate-100 rounded-[32px] space-y-4">
+                    <h4 className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
+                       {editingUser ? 'Chỉnh sửa tài khoản' : '+ Thêm tài khoản mới'}
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên hiển thị</label>
+                        <input 
+                          className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                          placeholder="Nguyễn Văn A" 
+                          value={newUserFormData.name}
+                          onChange={(e) => setNewUserFormData({...newUserFormData, name: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên đăng nhập</label>
+                        <input 
+                          className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                          placeholder="username" 
+                          value={newUserFormData.username}
+                          onChange={(e) => setNewUserFormData({...newUserFormData, username: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{editingUser ? 'Mật khẩu mới (để trống nếu không đổi)' : 'Mật khẩu'}</label>
+                        <input 
+                          type="password"
+                          className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                          placeholder="••••••••" 
+                          value={newUserFormData.password}
+                          onChange={(e) => setNewUserFormData({...newUserFormData, password: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Quyền hạn</label>
+                        <select 
+                          className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all appearance-none" 
+                          value={newUserFormData.role}
+                          onChange={(e) => setNewUserFormData({...newUserFormData, role: e.target.value as UserRole})}
+                        >
+                          <option value={UserRole.ADMIN}>Quản trị viên (Full Access)</option>
+                          <option value={UserRole.STAFF}>Nhân viên (Limited Access)</option>
+                        </select>
+                      </div>
+                    </div>
+                    
+                    <div className="pt-2 flex gap-3">
+                      {editingUser && (
+                        <button 
+                          onClick={() => {
+                            setEditingUser(null);
+                            setNewUserFormData({ name: '', username: '', password: '', role: UserRole.STAFF });
+                          }}
+                          className="flex-1 py-3.5 bg-slate-200 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-300 transition-all"
+                        >
+                          Hủy sửa
+                        </button>
+                      )}
+                      <button 
+                        onClick={handleSaveUser}
+                        className="flex-[2] py-3.5 bg-primary text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-primary/20 hover:opacity-90 transition-all"
+                      >
+                        {editingUser ? 'Lưu thay đổi' : 'Tạo tài khoản'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row gap-4">
+                <button 
+                  onClick={() => {
+                    setIsAccountManagementModalOpen(false);
+                    setEditingUser(null);
+                    setNewUserFormData({ name: '', username: '', password: '', role: UserRole.STAFF });
+                  }}
+                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95 shadow-xl shadow-slate-900/20"
+                >
+                  Đóng quản lý tài khoản
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {isServiceModalOpen && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div 
@@ -2356,35 +3247,95 @@ export default function App() {
                   <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">Sử dụng cho phòng {rooms.find(r => r.id === selectedBookingDetails?.roomId)?.number}</p>
                 </header>
 
-                <div className="grid grid-cols-1 gap-3">
-                  {availableServices.map((service, idx) => (
-                    <button 
-                      key={idx}
-                      onClick={() => {
-                        addServiceToBooking(service.name, service.price);
-                        setIsServiceModalOpen(false);
-                      }}
-                      className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl hover:border-primary hover:bg-primary/5 transition-all group"
-                    >
-                      <div className="text-left">
-                        <p className="text-sm font-black text-text-main group-hover:text-primary transition-colors">{service.name}</p>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">{formatCurrency(service.price)} / đơn vị</p>
+                {serviceForm ? (
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên dịch vụ</label>
+                      <input 
+                        className="w-full px-5 py-3.5 bg-slate-100 border-none rounded-2xl text-sm font-bold text-slate-500 outline-none" 
+                        value={serviceForm.name}
+                        readOnly
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Số lượng</label>
+                      <div className="flex items-center gap-4">
+                        <button 
+                          className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors"
+                          onClick={() => setServiceForm({...serviceForm, quantity: Math.max(1, serviceForm.quantity - 1)})}
+                        >
+                          <Minus size={20} />
+                        </button>
+                        <span className="text-xl font-black text-text-main flex-1 text-center">{serviceForm.quantity}</span>
+                        <button 
+                          className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors"
+                          onClick={() => setServiceForm({...serviceForm, quantity: serviceForm.quantity + 1})}
+                        >
+                          <Plus size={20} />
+                        </button>
                       </div>
-                      <div className="w-8 h-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all">
-                        <Plus size={16} />
-                      </div>
-                    </button>
-                  ))}
-                </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Đơn giá (VND)</label>
+                      <input 
+                        className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all" 
+                        type="number"
+                        value={serviceForm.price}
+                        onChange={(e) => setServiceForm({...serviceForm, price: Number(e.target.value)})}
+                      />
+                    </div>
+                    
+                    <div className="pt-2 flex gap-3">
+                      <button 
+                        onClick={() => setServiceForm(null)}
+                        className="flex-1 py-3.5 bg-slate-200 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-300 transition-all"
+                      >
+                        Quay lại
+                      </button>
+                      <button 
+                        onClick={() => {
+                          addServiceToBooking(serviceForm.name, serviceForm.price, serviceForm.quantity);
+                          setServiceForm(null);
+                          setIsServiceModalOpen(false);
+                        }}
+                        className="flex-[2] py-3.5 bg-primary text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-primary/20 hover:opacity-90 transition-all"
+                      >
+                        Thêm ({formatCurrency(serviceForm.price * serviceForm.quantity)})
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 gap-3">
+                      {availableServices.map((service, idx) => (
+                        <button 
+                          key={idx}
+                          onClick={() => {
+                            setServiceForm({ name: service.name, price: service.price, quantity: 1 });
+                          }}
+                          className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl hover:border-primary hover:bg-primary/5 transition-all group"
+                        >
+                          <div className="text-left">
+                            <p className="text-sm font-black text-text-main group-hover:text-primary transition-colors">{service.name}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">{formatCurrency(service.price)} / đơn vị</p>
+                          </div>
+                          <div className="w-8 h-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all">
+                            <Plus size={16} />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
 
-                <div className="pt-4">
-                  <button 
-                    onClick={() => setIsServiceModalOpen(false)}
-                    className="w-full py-4 bg-slate-100 text-slate-400 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all"
-                  >
-                    Hủy bỏ
-                  </button>
-                </div>
+                    <div className="pt-4">
+                      <button 
+                        onClick={() => setIsServiceModalOpen(false)}
+                        className="w-full py-4 bg-slate-100 text-slate-400 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all"
+                      >
+                        Hủy bỏ
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </motion.div>
           </div>
